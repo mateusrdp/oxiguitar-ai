@@ -815,6 +815,30 @@ pub(crate) mod tests {
         assert_eq!(w.flush().unwrap(), None, "nothing more to hand back");
     }
 
+    /// set_info changes the title, artist and album it is given, and only
+    /// those; with none of them it asks for one.
+    #[test]
+    fn set_info_changes_the_title_artist_and_album() {
+        let fake = Fake::with_song();
+        let mut w = Workspace::new(&fake);
+        assert_eq!(
+            w.call(
+                "set_info",
+                r#"{"title": "Night Ride", "artist": "The Frets"}"#
+            ),
+            "Set the title and artist."
+        );
+        assert!(
+            w.call("set_info", "{}")
+                .starts_with("Error: give a title, an artist or an album")
+        );
+        w.flush().unwrap().unwrap();
+        let (_, score) = fake.score.lock().unwrap().clone().unwrap();
+        assert_eq!(score.info.title, "Night Ride");
+        assert_eq!(score.info.artist, "The Frets");
+        assert_eq!(score.info.album, "");
+    }
+
     #[test]
     fn a_tool_of_oxiguitar_runs_after_the_changes_are_handed_back() {
         let fake = Fake::with_song();

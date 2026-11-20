@@ -40,6 +40,7 @@ Rust 1.99 or later from [rustup](https://rustup.rs). The plugin SDK comes from O
 ```sh
 cargo test          # unit tests, a conversation with a scripted server on this computer, and the contract suite on the built .oxp file
 ./build-oxp.sh      # dist/ai-VERSION-SYSTEM-ARCH.oxp
+python3 scripts/test-all.py   # every test, as the manual's Testing page says
 ```
 
 How it works, what it leaves out and why: [docs/design.md](docs/design.md).
