@@ -20,10 +20,9 @@ crate-type = ["lib"]
 oxp = []
 
 [dependencies]
-# The SDK, from OxiGuitar's repository at the commit of interface 1.14
-# (mateusrdp/oxiguitar#323) until a release has it: then its tag. Nothing
-# of OxiGuitar's is on crates.io.
-oxiguitar-plugin = { git = "https://github.com/mateusrdp/oxiguitar", rev = "56116416e58a7502ace266620ab0ad65f5084d30" }
+# The SDK, from the tag of OxiGuitar's repository that has interface 1.14.
+# Nothing of OxiGuitar's is on crates.io.
+oxiguitar-plugin = { git = "https://github.com/mateusrdp/oxiguitar", tag = "v0.21.5" }
 serde = { version = "1", features = ["derive"] }
 # HTTP to the model's server (the OpenAI chat completions protocol). Pure
 # Rust but for TLS's cryptography: rustls with ring, the mature provider
@@ -34,8 +33,8 @@ ureq = { version = "3.5", default-features = false, features = ["rustls"] }
 [dev-dependencies]
 # The contract suite (tests/contract.rs) runs the built .oxp file through
 # OxiGuitar's own plugin host.
-oxiguitar-plugin-test = { git = "https://github.com/mateusrdp/oxiguitar", rev = "56116416e58a7502ace266620ab0ad65f5084d30" }
-oxiguitar-host = { git = "https://github.com/mateusrdp/oxiguitar", rev = "56116416e58a7502ace266620ab0ad65f5084d30" }
+oxiguitar-plugin-test = { git = "https://github.com/mateusrdp/oxiguitar", tag = "v0.21.5" }
+oxiguitar-host = { git = "https://github.com/mateusrdp/oxiguitar", tag = "v0.21.5" }
 
 # Plugins deny `unsafe` rather than forbid it: `export_plugin!` allows it on
 # the two attributes it generates, and nowhere else.
