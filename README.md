@@ -11,6 +11,8 @@ The AI plugin for [OxiGuitar](https://github.com/mateusrdp/oxiguitar), a free, o
 - **Your data.** A server on this computer (localhost, 127.0.0.1, ::1) is used at once. Before anything goes to a server anywhere else, the chat asks, naming it; what you allow is listed in AI Settings, where you can forget it. Only what you type and what the model reads of the score are sent, and only when you send a question. OxiGuitar itself never connects anywhere; this plugin does, as you set it up to.
 - Keys are kept as typed in OxiGuitar's `settings.json` (in your OxiGuitar folder), or read from an environment variable you name instead.
 
+<img src="docs/images/chat.png" alt="The AI tab in OxiGuitar's right-hand area: Settings… and New Chat, the conversation, the box to type in and Send" width="260"> <img src="docs/images/settings.png" alt="AI Settings, its Server page: the preset, the scheme, the host, port, path and query, and where requests go" width="420">
+
 Small local models call tools less reliably and write weaker music than large hosted ones. Pick a model that supports tool calling (Qwen 3, Llama 3.1 and later, Mistral Small, GPT-OSS and the like on a local server).
 
 ## The Flatpak
