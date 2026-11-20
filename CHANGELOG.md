@@ -4,6 +4,10 @@ All notable changes to the AI plugin. The format follows [Keep a Changelog](http
 
 ## [Unreleased]
 
+### Changed
+
+- Built against the SDK of OxiGuitar 0.21.5 (its tag `v0.21.5`, interface 1.14) instead of a commit of its development branch. Nothing changes in how the plugin works.
+
 ## [0.1.0] - 2026-11-20
 
 ### Added
