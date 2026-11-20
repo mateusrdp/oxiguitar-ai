@@ -1,16 +1,19 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Mateus Rocha de Paula and the OxiGuitar contributors
 
-//! The dialog `settings`: the server (a preset, then each part of its
-//! address on its own), the key and the other headers, the model (typed,
-//! or picked from the server's list), the answers' limits, the user's own
-//! instructions and the servers away from this computer they allowed. A
+//! The dialog `settings`, in six pages chosen at its top (a dialog doesn't
+//! scroll): the server (a preset, then each part of its address on its
+//! own), the key, the key's header and more headers, the model (typed, or
+//! picked from the server's list), the answers' limits, and the user's own
+//! instructions with the servers away from this computer they allowed. A
 //! draft while it is open: OK keeps it, Cancel forgets it.
 //!
-//! OxiGuitar's own widgets where they fit; the key (hidden as it is
-//! typed), the extra headers and the instructions (several lines) are text
-//! boxes of the plugin's own, on surfaces.
+//! OxiGuitar's own widgets for choices, lists, tickboxes and buttons; every
+//! text is a text box of the plugin's own on a surface, so what is typed
+//! counts as it is typed, the key is hidden, and the headers and the
+//! instructions have several lines.
 
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use oxiguitar_plugin::display::Item;
@@ -22,23 +25,176 @@ use crate::client::Client;
 use crate::settings::{PRESETS, Settings};
 use crate::ui::text::{Measure, Outcome, Rect, TextBox};
 
-/// The dialog's text boxes, by their surface's id.
-const BOXES: [&str; 3] = ["key", "headers", "instructions"];
+/// A text of the settings: its id (its surface's), what it is called,
+/// what shows while it is empty, how many lines it shows, and whether it
+/// is hidden.
+struct Text {
+    id: &'static str,
+    label: &'static str,
+    placeholder: &'static str,
+    lines: usize,
+    hidden: bool,
+}
+
+const fn t(id: &'static str, label: &'static str, placeholder: &'static str) -> Text {
+    Text {
+        id,
+        label,
+        placeholder,
+        lines: 1,
+        hidden: false,
+    }
+}
+
+const TEXTS: [Text; 15] = [
+    t("host", "Host", "Host name or address"),
+    t("port", "Port", "Such as 443"),
+    t("path", "Path", "Such as /v1"),
+    t("query", "Query", "Usually empty; api-version=… for Azure"),
+    Text {
+        id: "key",
+        label: "Key (personal access token)",
+        placeholder: "Paste it from the provider's site",
+        lines: 1,
+        hidden: true,
+    },
+    t(
+        "key-env",
+        "Or the environment variable that holds it",
+        "Such as OPENAI_API_KEY",
+    ),
+    t("auth-header", "The key's header", "Authorization"),
+    t("auth-prefix", "Before the key", "Bearer (and a space)"),
+    Text {
+        id: "headers",
+        label: "More headers, one a line",
+        placeholder: "Name: value",
+        lines: 4,
+        hidden: false,
+    },
+    t("model", "Model", "Its name, as the server knows it"),
+    t("temperature", "Temperature, 0 to 2", "Empty: the server's"),
+    t("max-tokens", "Most tokens an answer", "Empty: the server's"),
+    t("timeout", "Seconds a request may take", "300"),
+    t("steps", "Tool calls an answer may make", "16"),
+    Text {
+        id: "instructions",
+        label: "Your instructions for the model",
+        placeholder: "Such as: answer in Portuguese; keep to the first five frets",
+        lines: 5,
+        hidden: false,
+    },
+];
+
+const PAGES: [&str; 6] = [
+    "Server",
+    "Key",
+    "Headers",
+    "Model",
+    "Answers",
+    "Instructions",
+];
+
+fn text_spec(id: &str) -> Option<&'static Text> {
+    TEXTS.iter().find(|t| t.id == id)
+}
+
+/// A text's value in the settings.
+fn value(s: &Settings, id: &str) -> String {
+    match id {
+        "host" => s.host.clone(),
+        "port" => s.port.to_string(),
+        "path" => s.path.clone(),
+        "query" => s.query.clone(),
+        "key" => s.api_key.clone(),
+        "key-env" => s.api_key_env.clone(),
+        "auth-header" => s.auth_header.clone(),
+        "auth-prefix" => s.auth_prefix.clone(),
+        "headers" => s.extra_headers.clone(),
+        "model" => s.model.clone(),
+        "temperature" => s.temperature.clone(),
+        "max-tokens" => s.max_tokens.clone(),
+        "timeout" => s.timeout.to_string(),
+        "steps" => s.max_steps.to_string(),
+        "instructions" => s.instructions.clone(),
+        _ => String::new(),
+    }
+}
+
+/// Sets a text's value in the settings; a number that isn't one is an
+/// error naming it, and the setting keeps its value.
+fn set(s: &mut Settings, id: &str, v: &str) -> Result<(), String> {
+    let number = |what: &str, lo: u32, hi: u32| -> Result<u32, String> {
+        v.trim()
+            .parse::<u32>()
+            .ok()
+            .filter(|n| (lo..=hi).contains(n))
+            .ok_or_else(|| format!("{what} is a whole number from {lo} to {hi}"))
+    };
+    match id {
+        "host" => s.host = v.trim().to_owned(),
+        "port" => s.port = u16::try_from(number("The port", 1, 65535)?).unwrap_or(s.port),
+        "path" => s.path = v.trim().to_owned(),
+        "query" => s.query = v.trim().to_owned(),
+        "key" => s.api_key = v.trim().to_owned(),
+        "key-env" => s.api_key_env = v.trim().to_owned(),
+        "auth-header" => s.auth_header = v.trim().to_owned(),
+        // Spaces matter here ("Bearer "): kept as typed.
+        "auth-prefix" => s.auth_prefix = v.to_owned(),
+        "headers" => s.extra_headers = v.to_owned(),
+        "model" => s.model = v.trim().to_owned(),
+        "temperature" => s.temperature = v.trim().to_owned(),
+        "max-tokens" => s.max_tokens = v.trim().to_owned(),
+        "timeout" => s.timeout = number("The timeout", 10, 3600)?,
+        "steps" => s.max_steps = number("The tool calls", 1, 100)?,
+        "instructions" => s.instructions = v.to_owned(),
+        _ => {}
+    }
+    Ok(())
+}
 
 #[derive(Debug, Default)]
 struct Draft {
+    /// The settings as the dialog opened, with the choices made since.
     settings: Option<Settings>,
-    key: TextBox,
-    headers: TextBox,
-    instructions: TextBox,
-    widths: [f32; 3],
-    focused: Option<usize>,
+    boxes: HashMap<&'static str, TextBox>,
+    widths: HashMap<&'static str, f32>,
+    focused: Option<&'static str>,
+    page: usize,
     show_key: bool,
     models: Vec<String>,
     /// What the last model list request said.
     status: String,
     loading: bool,
     picked_server: Option<usize>,
+}
+
+impl Draft {
+    /// The settings with every text box's value, and the first problem,
+    /// if a number isn't one.
+    fn current(&self) -> (Settings, Option<String>) {
+        let mut s = self.settings.clone().unwrap_or_default();
+        let mut problem = None;
+        for t in &TEXTS {
+            if let Some(b) = self.boxes.get(t.id)
+                && let Err(e) = set(&mut s, t.id, &b.text)
+            {
+                problem.get_or_insert(e);
+            }
+        }
+        (s, problem)
+    }
+
+    /// The text boxes show `s` again (a preset was chosen, say).
+    fn fill(&mut self, s: &Settings) {
+        for t in &TEXTS {
+            let b = self
+                .boxes
+                .entry(t.id)
+                .or_insert_with(|| TextBox::new("", t.lines > 1, false, t.hidden));
+            b.set(&value(s, t.id));
+        }
+    }
 }
 
 /// The dialog.
@@ -58,6 +214,15 @@ fn lock(d: &Mutex<Draft>) -> MutexGuard<'_, Draft> {
     d.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
+fn label(text: &str, muted: bool) -> Row {
+    Row {
+        widgets: vec![Widget::Label {
+            text: text.into(),
+            muted,
+        }],
+    }
+}
+
 impl SettingsDialog {
     /// The dialog.
     pub fn new(host: Host, measure: Arc<dyn Measure + Send + Sync>) -> SettingsDialog {
@@ -73,10 +238,7 @@ impl SettingsDialog {
         let mut d = lock(&self.draft);
         if d.settings.is_none() {
             let s = Settings::load(&self.host);
-            d.key = TextBox::new(&s.api_key, false, false, true);
-            d.headers = TextBox::new(&s.extra_headers, true, false, false);
-            d.instructions = TextBox::new(&s.instructions, true, false, false);
-            d.widths = [300.0; 3];
+            d.fill(&s);
             d.settings = Some(s);
         }
         d
@@ -88,14 +250,10 @@ impl SettingsDialog {
         if d.loading {
             return;
         }
-        let Some(mut s) = d.settings.clone() else {
-            return;
-        };
-        s.api_key = d.key.text.clone();
-        s.extra_headers = d.headers.text.clone();
+        let (s, _) = d.current();
         if !s.may_send() {
             d.status = format!(
-                "{} isn't on this computer: ask a question in the chat first and allow it, or choose a server here.",
+                "{} isn't on this computer: ask a question in the chat first and allow it there.",
                 s.server()
             );
             return;
@@ -127,247 +285,235 @@ impl SettingsDialog {
         }
     }
 
-    fn text_box(&self, d: &mut Draft, i: usize, height: f32) -> Widget {
-        let width = d.widths[i];
-        let focused = d.focused == Some(i);
-        let mut items: Vec<Item> = Vec::new();
-        let r = Rect {
-            x: 0.0,
-            y: 0.0,
-            w: width,
-            h: height,
+    /// A text's label and box.
+    fn text_rows(&self, d: &mut Draft, id: &'static str) -> Vec<Row> {
+        let Some(spec) = text_spec(id) else {
+            return Vec::new();
         };
-        let placeholder = match i {
-            0 => "Pasted from the provider's site",
-            1 => "One a line, Name: value",
-            _ => "Such as: answer in Portuguese; keep to the guitar's first five frets",
+        let width = d.widths.get(id).copied().unwrap_or(480.0);
+        let focused = d.focused == Some(id);
+        let show_key = d.show_key;
+        let Some(b) = d.boxes.get_mut(id) else {
+            return Vec::new();
         };
-        let b = match i {
-            0 => &mut d.key,
-            1 => &mut d.headers,
-            _ => &mut d.instructions,
-        };
-        if i == 0 {
-            b.masked = !d.show_key;
+        if spec.hidden {
+            b.masked = !show_key;
         }
-        b.draw(r, focused, placeholder, &*self.measure, &mut items);
-        Widget::Surface(Surface {
-            id: BOXES[i].into(),
-            height,
-            items,
-            keys: true,
-            cursor: Cursor::Text,
-        })
+        let height = spec.lines as f32 * crate::ui::text::line_height() + 12.0;
+        let mut items: Vec<Item> = Vec::new();
+        b.draw(
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: width,
+                h: height,
+            },
+            focused,
+            spec.placeholder,
+            &*self.measure,
+            &mut items,
+        );
+        vec![
+            label(spec.label, false),
+            Row {
+                widgets: vec![Widget::Surface(Surface {
+                    id: id.into(),
+                    height,
+                    items,
+                    keys: true,
+                    cursor: Cursor::Text,
+                })],
+            },
+        ]
     }
-}
 
-fn label(text: &str) -> Widget {
-    Widget::Label {
-        text: text.into(),
-        muted: false,
+    fn page_rows(&self, d: &mut Draft, s: &Settings) -> Vec<Row> {
+        let mut rows = Vec::new();
+        match d.page {
+            0 => {
+                let preset = PRESETS.iter().position(|p| p.id == s.preset).unwrap_or(0);
+                rows.push(Row {
+                    widgets: vec![Widget::Choice {
+                        id: "preset".into(),
+                        options: PRESETS.iter().map(|p| p.name.to_owned()).collect(),
+                        selected: u32::try_from(preset).unwrap_or(0),
+                        enabled: true,
+                    }],
+                });
+                rows.push(Row {
+                    widgets: vec![Widget::Choice {
+                        id: "scheme".into(),
+                        options: vec!["http".into(), "https".into()],
+                        selected: u32::from(s.scheme.eq_ignore_ascii_case("https")),
+                        enabled: true,
+                    }],
+                });
+                for id in ["host", "port", "path", "query"] {
+                    rows.extend(self.text_rows(d, id));
+                }
+                rows.push(label(
+                    &match s.url("chat/completions") {
+                        Ok(url) => format!("Requests go to {url}"),
+                        Err(e) => format!("The address isn't complete: {e}."),
+                    },
+                    true,
+                ));
+                if !s.is_local() {
+                    rows.push(label(
+                        if s.may_send() {
+                            "Not on this computer, and allowed: the conversation and what the model reads of the score are sent there."
+                        } else {
+                            "Not on this computer: the chat asks before anything is sent there."
+                        },
+                        true,
+                    ));
+                }
+            }
+            1 => {
+                rows.extend(self.text_rows(d, "key"));
+                rows.push(Row {
+                    widgets: vec![Widget::Toggle {
+                        id: "show-key".into(),
+                        text: "Show the key".into(),
+                        on: d.show_key,
+                        enabled: true,
+                    }],
+                });
+                let p = crate::settings::preset(&s.preset);
+                if !p.keys_at.is_empty() {
+                    rows.push(Row {
+                        widgets: vec![Widget::Link {
+                            text: format!("Get a key: {}", p.name),
+                            url: p.keys_at.to_owned(),
+                        }],
+                    });
+                }
+                rows.extend(self.text_rows(d, "key-env"));
+            }
+            2 => {
+                for id in ["auth-header", "auth-prefix", "headers"] {
+                    rows.extend(self.text_rows(d, id));
+                }
+            }
+            3 => {
+                rows.extend(self.text_rows(d, "model"));
+                rows.push(Row {
+                    widgets: vec![Widget::Button {
+                        id: "models".into(),
+                        text: if d.loading {
+                            "Asking…".into()
+                        } else {
+                            "List the Server's Models".into()
+                        },
+                        enabled: !d.loading,
+                    }],
+                });
+                if !d.status.is_empty() {
+                    rows.push(label(&d.status, true));
+                }
+                if !d.models.is_empty() {
+                    let selected = d
+                        .models
+                        .iter()
+                        .position(|m| *m == s.model)
+                        .and_then(|i| u32::try_from(i).ok());
+                    rows.push(Row {
+                        widgets: vec![Widget::List {
+                            id: "model-list".into(),
+                            items: d.models.clone(),
+                            selected,
+                        }],
+                    });
+                }
+            }
+            4 => {
+                for id in ["temperature", "max-tokens", "timeout", "steps"] {
+                    rows.extend(self.text_rows(d, id));
+                }
+                rows.push(Row {
+                    widgets: vec![Widget::Toggle {
+                        id: "stream".into(),
+                        text: "Show answers as they are written".into(),
+                        on: s.stream,
+                        enabled: true,
+                    }],
+                });
+            }
+            _ => {
+                rows.extend(self.text_rows(d, "instructions"));
+                if !s.allowed.is_empty() {
+                    rows.push(label("Servers away from this computer you allowed", false));
+                    rows.push(Row {
+                        widgets: vec![Widget::List {
+                            id: "allowed".into(),
+                            items: s.allowed.clone(),
+                            selected: d.picked_server.and_then(|i| u32::try_from(i).ok()),
+                        }],
+                    });
+                    rows.push(Row {
+                        widgets: vec![Widget::Button {
+                            id: "forget".into(),
+                            text: "Forget the Selected Server".into(),
+                            enabled: d.picked_server.is_some(),
+                        }],
+                    });
+                }
+            }
+        }
+        rows
     }
-}
-
-fn hint(text: &str) -> Widget {
-    Widget::Label {
-        text: text.into(),
-        muted: true,
-    }
-}
-
-fn field(id: &str, text: &str, placeholder: &str) -> Widget {
-    Widget::Field {
-        id: id.into(),
-        text: text.into(),
-        placeholder: placeholder.into(),
-        enabled: true,
-    }
-}
-
-fn row(widgets: Vec<Widget>) -> Row {
-    Row { widgets }
 }
 
 impl Tab for SettingsDialog {
     fn content(&self) -> TabContent {
         let mut d = self.draft();
-        let s = d.settings.clone().unwrap_or_default();
-        let preset = PRESETS.iter().position(|p| p.id == s.preset).unwrap_or(0);
-        let mut rows = vec![
-            row(vec![label("Server")]),
-            row(vec![Widget::Choice {
-                id: "preset".into(),
-                options: PRESETS.iter().map(|p| p.name.to_owned()).collect(),
-                selected: u32::try_from(preset).unwrap_or(0),
+        let (s, problem) = d.current();
+        let mut rows = vec![Row {
+            widgets: vec![Widget::Choice {
+                id: "page".into(),
+                options: PAGES.iter().map(|p| (*p).to_owned()).collect(),
+                selected: u32::try_from(d.page).unwrap_or(0),
                 enabled: true,
-            }]),
-            row(vec![Widget::Choice {
-                id: "scheme".into(),
-                options: vec!["http".into(), "https".into()],
-                selected: u32::from(s.scheme.eq_ignore_ascii_case("https")),
-                enabled: true,
-            }]),
-            row(vec![field("host", &s.host, "Host name or address")]),
-            row(vec![field("port", &s.port.to_string(), "Port")]),
-            row(vec![field("path", &s.path, "Path, such as /v1")]),
-            row(vec![field(
-                "query",
-                &s.query,
-                "Query, such as api-version=2024-10-21 (usually empty)",
-            )]),
-            row(vec![hint(&match s.url("chat/completions") {
-                Ok(url) => format!("Requests go to {url}"),
-                Err(e) => format!("The address isn't complete: {e}."),
-            })]),
-        ];
-        if !s.is_local() {
-            rows.push(row(vec![hint(if s.may_send() {
-                "This server isn't on this computer, and you allowed it: the conversation and what the model reads of the score are sent there."
-            } else {
-                "This server isn't on this computer: the chat asks before anything is sent there."
-            })]));
-        }
-        rows.push(row(vec![label("Key (personal access token)")]));
-        rows.push(row(vec![self.text_box(&mut d, 0, 32.0)]));
-        rows.push(row(vec![Widget::Toggle {
-            id: "show-key".into(),
-            text: "Show the key".into(),
-            on: d.show_key,
-            enabled: true,
-        }]));
-        let p = crate::settings::preset(&s.preset);
-        if !p.keys_at.is_empty() {
-            rows.push(row(vec![Widget::Link {
-                text: format!("Get a key for {}", p.name),
-                url: p.keys_at.to_owned(),
-            }]));
-        }
-        rows.push(row(vec![field(
-            "key-env",
-            &s.api_key_env,
-            "Or the environment variable that holds it, such as OPENAI_API_KEY",
-        )]));
-        rows.push(row(vec![field(
-            "auth-header",
-            &s.auth_header,
-            "The key's header",
-        )]));
-        rows.push(row(vec![field(
-            "auth-prefix",
-            &s.auth_prefix,
-            "Before the key, such as \"Bearer \"",
-        )]));
-        rows.push(row(vec![label("More headers")]));
-        rows.push(row(vec![self.text_box(&mut d, 1, 56.0)]));
-        rows.push(row(vec![label("Model")]));
-        rows.push(row(vec![field(
-            "model",
-            &s.model,
-            "The model's name, as the server knows it",
-        )]));
-        rows.push(row(vec![Widget::Button {
-            id: "models".into(),
-            text: if d.loading {
-                "Asking…".into()
-            } else {
-                "List the Server's Models".into()
-            },
-            enabled: !d.loading,
-        }]));
-        if !d.status.is_empty() {
-            rows.push(row(vec![hint(&d.status)]));
-        }
-        if !d.models.is_empty() {
-            let selected = d
-                .models
-                .iter()
-                .position(|m| *m == s.model)
-                .and_then(|i| u32::try_from(i).ok());
-            rows.push(row(vec![Widget::List {
-                id: "model-list".into(),
-                items: d.models.clone(),
-                selected,
-            }]));
-        }
-        rows.push(row(vec![label("Answers")]));
-        rows.push(row(vec![field(
-            "temperature",
-            &s.temperature,
-            "Temperature, 0 to 2 (empty: the server's)",
-        )]));
-        rows.push(row(vec![field(
-            "max-tokens",
-            &s.max_tokens,
-            "Most tokens an answer (empty: the server's)",
-        )]));
-        rows.push(row(vec![field(
-            "timeout",
-            &s.timeout.to_string(),
-            "Seconds a request may take",
-        )]));
-        rows.push(row(vec![field(
-            "steps",
-            &s.max_steps.to_string(),
-            "Tool calls an answer may make",
-        )]));
-        rows.push(row(vec![Widget::Toggle {
-            id: "stream".into(),
-            text: "Show answers as they are written".into(),
-            on: s.stream,
-            enabled: true,
-        }]));
-        rows.push(row(vec![label("Your instructions for the model")]));
-        rows.push(row(vec![self.text_box(&mut d, 2, 72.0)]));
-        if !s.allowed.is_empty() {
-            rows.push(row(vec![label(
-                "Servers away from this computer you allowed",
-            )]));
-            rows.push(row(vec![Widget::List {
-                id: "allowed".into(),
-                items: s.allowed.clone(),
-                selected: d.picked_server.and_then(|i| u32::try_from(i).ok()),
-            }]));
-            rows.push(row(vec![Widget::Button {
-                id: "forget".into(),
-                text: "Forget the Selected Server".into(),
-                enabled: d.picked_server.is_some(),
-            }]));
+            }],
+        }];
+        rows.extend(self.page_rows(&mut d, &s));
+        if let Some(p) = problem {
+            rows.push(label(&format!("{p}."), false));
         }
         TabContent { rows }
     }
 
     fn on(&self, widget: &str, event: TabEvent) -> Result<(), Error> {
         let mut d = self.draft();
-        if let Some(i) = BOXES.iter().position(|b| *b == widget) {
-            let measure = &*self.measure;
+        if let Some(spec) = text_spec(widget) {
+            let id = spec.id;
             match event {
                 TabEvent::Resized { width, .. } => {
-                    d.widths[i] = width.max(40.0);
+                    d.widths.insert(id, width.max(40.0));
                     return Ok(());
                 }
                 TabEvent::Focus(true) => {
-                    d.focused = Some(i);
+                    d.focused = Some(id);
                     return Ok(());
                 }
                 TabEvent::Focus(false) => {
-                    if d.focused == Some(i) {
+                    if d.focused == Some(id) {
                         d.focused = None;
                     }
                     return Ok(());
                 }
                 _ => {}
             }
-            let width = d.widths[i];
+            let width = d.widths.get(id).copied().unwrap_or(480.0);
             let r = Rect {
                 x: 0.0,
                 y: 0.0,
                 w: width,
                 h: 200.0,
             };
-            let b = match i {
-                0 => &mut d.key,
-                1 => &mut d.headers,
-                _ => &mut d.instructions,
+            let measure = &*self.measure;
+            let Some(b) = d.boxes.get_mut(id) else {
+                return Ok(());
             };
             let mut copied = None;
             match event {
@@ -380,120 +526,47 @@ impl Tab for SettingsDialog {
                     }
                 }
                 TabEvent::Pointer(p) if p.kind == PointerKind::Down => {
-                    b.click(p.at, r, measure, false)
+                    b.click(p.at, r, measure, false);
                 }
                 TabEvent::Pointer(p) if p.kind == PointerKind::Drag => b.drag(p.at, r, measure),
                 _ => {}
             }
+            drop(d);
             if let Some(t) = copied {
                 let _ = self.host.copy(&t);
             }
             return Ok(());
         }
-        let Some(s) = d.settings.as_mut() else {
-            return Ok(());
-        };
-        let text = |e: &TabEvent| match e {
-            TabEvent::Edited(t) => Some(t.clone()),
-            _ => None,
-        };
-        let number = |e: &TabEvent, what: &str| -> Result<Option<u32>, Error> {
-            match text(e) {
-                None => Ok(None),
-                Some(t) => t.trim().parse::<u32>().map(Some).map_err(|_| {
-                    Error::new(
-                        oxiguitar_plugin::ErrorKind::Invalid,
-                        format!("{what} is a whole number"),
-                    )
-                }),
-            }
-        };
-        match (widget, &event) {
+        match (widget, event) {
+            ("page", TabEvent::Chosen(i)) => d.page = (i as usize).min(PAGES.len() - 1),
             ("preset", TabEvent::Chosen(i)) => {
-                if let Some(p) = PRESETS.get(*i as usize) {
+                if let Some(p) = PRESETS.get(i as usize) {
+                    let (mut s, _) = d.current();
                     s.apply_preset(p.id);
+                    d.fill(&s);
+                    d.settings = Some(s);
                 }
             }
             ("scheme", TabEvent::Chosen(i)) => {
-                s.scheme = if *i == 1 { "https" } else { "http" }.into();
-            }
-            ("host", e) => {
-                if let Some(t) = text(e) {
-                    s.host = t.trim().to_owned();
+                if let Some(s) = d.settings.as_mut() {
+                    s.scheme = if i == 1 { "https" } else { "http" }.into();
                 }
             }
-            ("port", e) => {
-                if let Some(p) = number(e, "the port")? {
-                    s.port = u16::try_from(p).ok().filter(|p| *p > 0).ok_or_else(|| {
-                        Error::new(
-                            oxiguitar_plugin::ErrorKind::Invalid,
-                            "the port is 1 to 65535",
-                        )
-                    })?;
+            ("stream", TabEvent::Toggled(on)) => {
+                if let Some(s) = d.settings.as_mut() {
+                    s.stream = on;
                 }
             }
-            ("path", e) => {
-                if let Some(t) = text(e) {
-                    s.path = t.trim().to_owned();
-                }
-            }
-            ("query", e) => {
-                if let Some(t) = text(e) {
-                    s.query = t.trim().to_owned();
-                }
-            }
-            ("key-env", e) => {
-                if let Some(t) = text(e) {
-                    s.api_key_env = t.trim().to_owned();
-                }
-            }
-            ("auth-header", e) => {
-                if let Some(t) = text(e) {
-                    s.auth_header = t.trim().to_owned();
-                }
-            }
-            // Spaces matter here ("Bearer "): kept as typed.
-            ("auth-prefix", e) => {
-                if let Some(t) = text(e) {
-                    s.auth_prefix = t;
-                }
-            }
-            ("model", e) => {
-                if let Some(t) = text(e) {
-                    s.model = t.trim().to_owned();
-                }
-            }
-            ("temperature", e) => {
-                if let Some(t) = text(e) {
-                    s.temperature = t.trim().to_owned();
-                }
-            }
-            ("max-tokens", e) => {
-                if let Some(t) = text(e) {
-                    s.max_tokens = t.trim().to_owned();
-                }
-            }
-            ("timeout", e) => {
-                if let Some(t) = number(e, "the timeout")? {
-                    s.timeout = t.clamp(10, 3600);
-                }
-            }
-            ("steps", e) => {
-                if let Some(t) = number(e, "the steps")? {
-                    s.max_steps = t.clamp(1, 100);
-                }
-            }
-            ("stream", TabEvent::Toggled(on)) => s.stream = *on,
-            ("show-key", TabEvent::Toggled(on)) => d.show_key = *on,
+            ("show-key", TabEvent::Toggled(on)) => d.show_key = on,
             ("models", TabEvent::Clicked) => self.load_models(&mut d),
             ("model-list", TabEvent::Chosen(i)) => {
-                if let Some(m) = d.models.get(*i as usize).cloned()
-                    && let Some(s) = d.settings.as_mut()
+                if let Some(m) = d.models.get(i as usize).cloned()
+                    && let Some(b) = d.boxes.get_mut("model")
                 {
-                    s.model = m;
+                    b.set(&m);
                 }
             }
-            ("allowed", TabEvent::Chosen(i)) => d.picked_server = Some(*i as usize),
+            ("allowed", TabEvent::Chosen(i)) => d.picked_server = Some(i as usize),
             ("forget", TabEvent::Clicked) => {
                 if let Some(i) = d.picked_server.take()
                     && let Some(s) = d.settings.as_mut()
@@ -508,17 +581,17 @@ impl Tab for SettingsDialog {
     }
 
     fn closed(&self, ok: bool) -> Result<(), Error> {
-        let mut d = lock(&self.draft);
-        let draft = std::mem::take(&mut *d);
-        if !ok {
+        let draft = std::mem::take(&mut *lock(&self.draft));
+        if !ok || draft.settings.is_none() {
             return Ok(());
         }
-        let Some(mut s) = draft.settings else {
-            return Ok(());
-        };
-        s.api_key = draft.key.text.trim().to_owned();
-        s.extra_headers = draft.headers.text;
-        s.instructions = draft.instructions.text;
+        let (s, problem) = draft.current();
+        if let Some(p) = problem {
+            self.host.notify(
+                Level::Warning,
+                format!("AI Settings: {p}; the rest is kept."),
+            );
+        }
         if let Err(e) = s.headers() {
             self.host
                 .notify(Level::Warning, format!("AI Settings: {e}."));
@@ -531,73 +604,70 @@ impl Tab for SettingsDialog {
 mod tests {
     use super::*;
     use crate::ui::text::Fixed;
-    use oxiguitar_plugin::display::Paint;
+    use oxiguitar_plugin::{Key, KeyName};
 
-    #[test]
-    fn the_dialog_shows_every_part_and_cancel_forgets() {
-        let host = Host::detached();
-        let d = SettingsDialog::new(host, Arc::new(Fixed));
-        let c = d.content();
-        assert!(c.problems().is_empty(), "{:?}", c.problems());
-        for id in [
-            "preset",
-            "scheme",
-            "host",
-            "port",
-            "path",
-            "query",
-            "key",
-            "key-env",
-            "auth-header",
-            "auth-prefix",
-            "headers",
-            "model",
-            "models",
-            "temperature",
-            "max-tokens",
-            "timeout",
-            "steps",
-            "stream",
-            "instructions",
-        ] {
-            assert!(c.widget(id).is_some(), "{id}");
-        }
-        d.on("preset", TabEvent::Chosen(3)).unwrap();
-        d.on("key", TabEvent::Typed("sk-secret".into())).unwrap();
-        let c = d.content();
-        assert!(
-            matches!(c.widget("host"), Some(Widget::Field { text, .. }) if text == "api.openai.com")
-        );
-        // The key shows as dots.
-        let Some(Widget::Surface(key)) = c.widget("key") else {
-            panic!()
+    fn page(d: &SettingsDialog, n: u32) -> TabContent {
+        d.on("page", TabEvent::Chosen(n)).unwrap();
+        d.content()
+    }
+
+    fn shows(c: &TabContent, id: &str, want: &str) -> bool {
+        let Some(Widget::Surface(s)) = c.widget(id) else {
+            panic!("{id}")
         };
-        assert!(
-            key.items
-                .iter()
-                .any(|i| matches!(i, Item::Text { text, .. } if text == "•••••••••"))
-        );
-        assert!(d.on("port", TabEvent::Edited("x".into())).is_err());
-        d.closed(false).unwrap();
-        let again = d.content();
-        assert!(
-            matches!(again.widget("host"), Some(Widget::Field { text, .. }) if text == "127.0.0.1")
-        );
+        s.items
+            .iter()
+            .any(|i| matches!(i, Item::Text { text, .. } if text == want))
     }
 
     #[test]
-    fn a_detached_host_paints_the_boxes_in_the_themes_roles() {
+    fn every_page_shows_its_parts_and_cancel_forgets() {
         let d = SettingsDialog::new(Host::detached(), Arc::new(Fixed));
-        let c = d.content();
-        let Some(Widget::Surface(s)) = c.widget("instructions") else {
-            panic!()
-        };
-        assert!(s.items.iter().any(|i| matches!(
-            i,
-            Item::Rect {
-                paint: Paint::Page,
-                ..
+        let pages = [
+            vec!["preset", "scheme", "host", "port", "path", "query"],
+            vec!["key", "show-key", "key-env"],
+            vec!["auth-header", "auth-prefix", "headers"],
+            vec!["model", "models"],
+            vec!["temperature", "max-tokens", "timeout", "steps", "stream"],
+            vec!["instructions"],
+        ];
+        for (n, ids) in pages.iter().enumerate() {
+            let c = page(&d, n as u32);
+            assert!(c.problems().is_empty(), "{:?}", c.problems());
+            for id in ids {
+                assert!(c.widget(id).is_some(), "page {n}: {id}");
             }
-        )));
+        }
+        page(&d, 0);
+        d.on("preset", TabEvent::Chosen(3)).unwrap();
+        assert!(shows(&d.content(), "host", "api.openai.com"));
+        d.on("key", TabEvent::Typed("sk-secret".into())).unwrap();
+        let c = page(&d, 1);
+        assert!(shows(&c, "key", "•••••••••"), "the key is hidden");
+        d.on("show-key", TabEvent::Toggled(true)).unwrap();
+        assert!(shows(&d.content(), "key", "sk-secret"));
+        d.closed(false).unwrap();
+        assert!(shows(&page(&d, 0), "host", "127.0.0.1"), "Cancel forgot it");
+    }
+
+    #[test]
+    fn a_number_that_isnt_one_is_said_and_the_rest_kept() {
+        let d = SettingsDialog::new(Host::detached(), Arc::new(Fixed));
+        page(&d, 0);
+        let backspace = Key {
+            name: KeyName::Backspace,
+            shift: false,
+            ctrl: false,
+            alt: false,
+        };
+        for _ in 0..5 {
+            d.on("port", TabEvent::Key(backspace)).unwrap();
+        }
+        d.on("port", TabEvent::Typed("x".into())).unwrap();
+        let c = d.content();
+        assert!(format!("{c:?}").contains("The port is a whole number"));
+        let (s, problem) = lock(&d.draft).current();
+        assert!(problem.is_some());
+        assert_eq!(s.port, 11434);
     }
 }

@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Mateus Rocha de Paula and the OxiGuitar contributors
 
-//! The tab `chat`, in the window's right-hand area: two buttons OxiGuitar
-//! draws (Settings…, New Chat), then a surface the plugin draws itself:
-//! the conversation, scrolled with the wheel and following the newest,
-//! the box the user types in, and Send (Stop while the model works).
+//! The tab `chat`, in the window's right-hand area: one surface the plugin
+//! draws itself: Settings… and New Chat at the top, the conversation,
+//! scrolled with the wheel and following the newest, the box the user
+//! types in, and Send (Stop while the model works).
 
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
@@ -22,12 +22,16 @@ use crate::ui::text::{self, Measure, Outcome, Rect, TextBox};
 const SURFACE: &str = "chat";
 const PAD: f32 = 8.0;
 const BUTTONS: f32 = 28.0;
+/// The height of the row of Settings… and New Chat.
+const HEADER: f32 = 30.0;
 const BODY: f32 = 13.0;
 const SMALL: f32 = 11.0;
 
 /// Something on the surface the pointer can use.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Action {
+    Settings,
+    NewChat,
     Input,
     Send,
     Stop,
@@ -154,6 +158,18 @@ impl ChatTab {
 
     fn act(&self, action: Action, st: &mut State) {
         match action {
+            Action::Settings => {
+                if let Err(e) = self.host.open_dialog(crate::SETTINGS) {
+                    self.shared.lock().entries.push(Entry::Error(format!(
+                        "the settings can't open: {}",
+                        e.message
+                    )));
+                }
+            }
+            Action::NewChat => {
+                self.shared.clear();
+                st.scroll = 0.0;
+            }
             Action::Input => {}
             Action::Send => self.submit(st),
             Action::Stop => self.shared.stop(),
@@ -517,26 +533,80 @@ impl Tab for ChatTab {
             });
         }
         let gap = 10.0;
+        let room = top - HEADER;
         let total: f32 = blocks.iter().map(|b| b.height + gap).sum::<f32>() + PAD;
-        st.most = (total - top).max(0.0);
+        st.most = (total - room).max(0.0);
         st.scroll = st.scroll.clamp(0.0, st.most);
-        let mut y = (top - total).min(0.0) + st.scroll + PAD;
-        // Short conversations start at the top.
-        if total < top {
-            y = PAD;
-        }
+        // Short conversations start at the top, long ones show their end.
+        let mut y = HEADER
+            + PAD
+            + if total < room {
+                0.0
+            } else {
+                room - total + st.scroll
+            };
         for b in blocks {
-            if y + b.height > -50.0 && y < top + 50.0 {
+            if y + b.height > 0.0 && y < top + 50.0 {
                 items.extend(b.items.into_iter().map(|i| shifted(i, y)));
                 for (r, a) in b.hits {
                     let r = Rect { y: r.y + y, ..r };
-                    if r.y + r.h <= top && r.y >= 0.0 {
+                    if r.y + r.h <= top && r.y >= HEADER {
                         hits.push((r, a));
                     }
                 }
             }
             y += b.height + gap;
         }
+        // The top row covers what the conversation drew above its room.
+        items.push(text::rect(
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w,
+                h: HEADER,
+            },
+            Paint::Page,
+        ));
+        let mut x = PAD;
+        for (label, action) in [
+            ("Settings…", Action::Settings),
+            ("New Chat", Action::NewChat),
+        ] {
+            let width = self
+                .measure
+                .edges(label, BODY)
+                .last()
+                .copied()
+                .unwrap_or(60.0)
+                + 16.0;
+            let r = Rect {
+                x,
+                y: 4.0,
+                w: width,
+                h: HEADER - 8.0,
+            };
+            let lit = st.hover == Some(action);
+            items.extend(text::frame(
+                r,
+                1.0,
+                if lit { Paint::Accent } else { Paint::Muted },
+            ));
+            items.push(text::text(
+                label,
+                r.x + 8.0,
+                r.y + r.h / 2.0 + BODY * 0.35,
+                BODY,
+                if lit { Paint::Accent } else { Paint::Ink },
+            ));
+            hits.push((r, action));
+            x += width + 6.0;
+        }
+        items.push(Item::Line {
+            from: Point::new(0.0, HEADER - 0.5),
+            to: Point::new(w, HEADER - 0.5),
+            width: 1.0,
+            paint: Paint::Muted,
+        });
         // The bottom panel covers what the conversation drew past its room.
         items.push(text::rect(
             Rect {
@@ -594,46 +664,21 @@ impl Tab for ChatTab {
         };
         st.hits = hits;
         TabContent {
-            rows: vec![
-                Row {
-                    widgets: vec![
-                        Widget::Button {
-                            id: "settings".into(),
-                            text: "Settings…".into(),
-                            enabled: true,
-                        },
-                        Widget::Button {
-                            id: "new".into(),
-                            text: "New Chat".into(),
-                            enabled: true,
-                        },
-                    ],
-                },
-                Row {
-                    widgets: vec![Widget::Surface(Surface {
-                        id: SURFACE.into(),
-                        height: 0.0,
-                        items,
-                        keys: true,
-                        cursor,
-                    })],
-                },
-            ],
+            rows: vec![Row {
+                widgets: vec![Widget::Surface(Surface {
+                    id: SURFACE.into(),
+                    height: 0.0,
+                    items,
+                    keys: true,
+                    cursor,
+                })],
+            }],
         }
     }
 
     fn on(&self, widget: &str, event: TabEvent) -> Result<(), Error> {
-        match (widget, &event) {
-            ("settings", TabEvent::Clicked) => {
-                return self.host.open_dialog(crate::SETTINGS);
-            }
-            ("new", TabEvent::Clicked) => {
-                self.shared.clear();
-                self.state().scroll = 0.0;
-                return Ok(());
-            }
-            (SURFACE, _) => {}
-            _ => return Ok(()),
+        if widget != SURFACE {
+            return Ok(());
         }
         let measure = &*self.measure;
         let mut st = self.state();

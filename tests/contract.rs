@@ -31,8 +31,7 @@ fn the_plugin_file_keeps_the_contract() {
     assert!(report.ok(), "failed: {:#?}", report.failed);
 }
 
-/// Through the host: the chat tab holds its buttons and a surface that
-/// takes the keyboard; text typed shows in it; a question with no score
+/// Through the host: the chat tab is a surface that takes the keyboard; text typed shows in it; a question with no score
 /// and no server to ask ends in a sentence, never a crash.
 #[test]
 fn the_chat_takes_typing_through_the_host() {
@@ -52,7 +51,6 @@ fn the_chat_takes_typing_through_the_host() {
         tab: "chat".into(),
     };
     let content = plugins.tab_content(&chat).unwrap();
-    assert!(content.widget("settings").is_some() && content.widget("new").is_some());
     let Some(Widget::Surface(s)) = content.widget("chat") else {
         panic!("{content:?}")
     };
