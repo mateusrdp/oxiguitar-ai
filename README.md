@@ -25,9 +25,13 @@ flatpak override --user --share=network io.github.mateusrdp.OxiGuitar
 
 (`flatpak override --user --unshare=network io.github.mateusrdp.OxiGuitar` takes it away again.)
 
+## Manual
+
+The manual is at <https://mateusrdp.github.io/oxiguitar-ai/>. Its source is in [docs/manual](docs/manual). It covers what the plugin is for, how it works, what it needs and how to install it.
+
 ## Install
 
-Every [release](https://github.com/mateusrdp/oxiguitar-ai/releases) holds a zip per system (Linux x86_64 and ARM64, Windows x86_64 and ARM64, macOS), a `.deb` and an `.rpm` for Linux, a per-user Windows installer, a macOS `.pkg`, and a `SHA256SUMS` file. The OxiGuitar manual's [install page](https://mateusrdp.github.io/oxiguitar/installing.html) says which one to use. The plugin needs the OxiGuitar release with plugin interface 1.14 (not released yet).
+Every [release](https://github.com/mateusrdp/oxiguitar-ai/releases) holds a zip per system (Linux x86_64 and ARM64, Windows x86_64 and ARM64, macOS), a `.deb` and an `.rpm` for Linux, a per-user Windows installer, a macOS `.pkg`, and a `SHA256SUMS` file. The [manual's install page](https://mateusrdp.github.io/oxiguitar-ai/install.html) says which one to use. The plugin needs OxiGuitar 0.21.5 or later (plugin interface 1.14).
 
 ## Build and test
 
