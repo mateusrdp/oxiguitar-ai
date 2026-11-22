@@ -397,6 +397,30 @@ use oxiguitar_plugin::serde_json;
 mod tests {
     use super::*;
 
+    /// The key comes from the environment variable the settings name, when it
+    /// is set; otherwise, as typed. (PATH stands in for a key's variable: it
+    /// is always set, and a test changing the environment would race the
+    /// others.)
+    #[test]
+    fn a_named_environment_variable_gives_the_key() {
+        let path = std::env::var("PATH").expect("PATH is set");
+        let typed = Settings {
+            api_key: " typed ".into(),
+            ..Settings::default()
+        };
+        assert_eq!(typed.key(), "typed");
+        let from_env = Settings {
+            api_key_env: "PATH".into(),
+            ..typed.clone()
+        };
+        assert_eq!(from_env.key(), path.trim());
+        let unset = Settings {
+            api_key_env: "OXIGUITAR_AI_NO_SUCH_VARIABLE".into(),
+            ..typed.clone()
+        };
+        assert_eq!(unset.key(), "typed");
+    }
+
     #[test]
     fn a_preset_fills_the_address_and_keeps_the_key_and_model() {
         let mut s = Settings {
