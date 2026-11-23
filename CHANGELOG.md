@@ -11,6 +11,7 @@ All notable changes to the AI plugin. The format follows [Keep a Changelog](http
 ### Changed
 
 - Built against the SDK of OxiGuitar 0.21.5 (its tag `v0.21.5`, interface 1.14) instead of a commit of its development branch. Nothing changes in how the plugin works.
+- **The manual explains the ideas behind the plugin** (its overview, with pictures), shows how to use it with screenshots, says in Architecture and strategy what it can't do yet, what is left out on purpose and where help is wanted, and has a Credits page listing every project it uses, with links and thanks. The README has a plain-words introduction and a Credits section.
 
 ## [0.1.0] - 2026-11-20
 

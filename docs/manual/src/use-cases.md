@@ -1,4 +1,24 @@
-# What you can do with it
+# How to use it
+
+## Set it up
+
+1. Start a model server, or get a key for a hosted one (see [Which model](#which-model) below).
+2. Choose **Plugins → AI Settings…**, or **Settings…** in the AI tab.
+3. Pick a preset under **Server**, such as Ollama on this computer or a hosted service, and change what you need: the host, the port, the key and the model.
+
+![The AI Settings dialog with the Ollama (this computer) preset: http, host 127.0.0.1, port 11434, path /v1, and the address requests go to](images/ai-settings.png)
+
+4. Click **OK**.
+
+## Ask
+
+Open the **AI** tab on the right, type in the box at the bottom and click **Send**. Ask about the song, or for a change: "write a bass line for bars 1 to 8", "fit every bar to its time signature", "transpose the whole song down a whole step".
+
+![The AI tab: a short hint about what to ask, the server in use, the question box and the Send button](images/ai-tab.png)
+
+**New Chat** starts over. Everything the model changes in one answer is a single step called "AI: …", so **Edit → Undo** takes it all back.
+
+## What you can do with it
 
 - Ask for music. The model can write bars into a track's voice, add tracks, change time and key signatures, tempo and sections, and set the title.
 - Ask about a score. It reads an overview of the song and any bars of it.
