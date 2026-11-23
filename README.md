@@ -2,6 +2,8 @@
 
 The AI plugin for [OxiGuitar](https://github.com/mateusrdp/oxiguitar), a free, open-source guitar tablature and score viewer, editor and player for Windows, macOS and Linux: a chat with a language model, in a tab of its own, that reads the score you have open, writes notes and tracks into it, runs OxiGuitar's tools and answers you (mateusrdp/oxiguitar#227).
 
+In plain words: a language model (the kind of program behind ChatGPT, Claude or Gemini) can only write text, but with *tool calling* it can ask the plugin to read bars, write notes or run OxiGuitar's tools, and so work on your score. Run a model on your own computer (Ollama, llama.cpp, LM Studio) or use a hosted one with your own key. The [manual](https://mateusrdp.github.io/oxiguitar-ai/) explains the trade-offs, including what leaves your computer.
+
 - Plugin file `ai.oxp`, id `oxiguitar.ai`, shown as **AI assistant**. A tab **AI** in the right-hand area, beside Song, Track, Bar and Note; **Plugins → AI Settings…** (or **Settings…** in the tab) chooses the server.
 - **Any server that speaks OpenAI's chat completions protocol**, with tool calling:
   - on this computer: [Ollama](https://ollama.com), [llama.cpp](https://github.com/ggml-org/llama.cpp)'s `llama-server` (run it with `--jinja` for tool calls), [LM Studio](https://lmstudio.ai);
@@ -48,6 +50,8 @@ How it works, what it leaves out and why: [docs/design.md](docs/design.md).
 ## Credits
 
 HTTP by [ureq](https://github.com/algesten/ureq), TLS by [rustls](https://github.com/rustls/rustls) with [ring](https://github.com/briansmith/ring), root certificates from Mozilla through [webpki-roots](https://github.com/rustls/webpki-roots), JSON by [serde](https://serde.rs) and serde_json.
+
+The manual's [Credits](https://mateusrdp.github.io/oxiguitar-ai/credits.html) page lists everything this plugin uses, with authors and licences. Thank you to all of them.
 
 ## Licence
 
