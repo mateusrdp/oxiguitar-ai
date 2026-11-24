@@ -40,23 +40,17 @@ pub struct AiPlugin {
     chat: ui::chat::ChatTab,
     settings: ui::settings_dialog::SettingsDialog,
     open_settings: Open,
-    open_chat: Open,
 }
 
-/// A tool that only shows something: the settings dialog, or the chat tab.
+/// The tool that shows the settings dialog.
 #[derive(Debug)]
 struct Open {
     host: Host,
-    dialog: bool,
 }
 
 impl Tool for Open {
     fn run(&self) -> Result<String, Error> {
-        if self.dialog {
-            self.host.open_dialog(SETTINGS)?;
-        } else {
-            self.host.show_tab(CHAT);
-        }
+        self.host.open_dialog(SETTINGS)?;
         Ok(String::new())
     }
 }
@@ -73,14 +67,7 @@ impl Plugin for AiPlugin {
                 Arc::new(host.clone()),
             ),
             settings: ui::settings_dialog::SettingsDialog::new(host.clone(), measure),
-            open_settings: Open {
-                host: host.clone(),
-                dialog: true,
-            },
-            open_chat: Open {
-                host: host.clone(),
-                dialog: false,
-            },
+            open_settings: Open { host },
         })
     }
 
@@ -95,7 +82,6 @@ impl Plugin for AiPlugin {
     fn tool(&self, id: &str) -> Option<&dyn Tool> {
         match id {
             SETTINGS => Some(&self.open_settings),
-            CHAT => Some(&self.open_chat),
             _ => None,
         }
     }

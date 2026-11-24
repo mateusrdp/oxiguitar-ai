@@ -13,7 +13,6 @@
   ],
   "events": ["score"],
   "tools": [
-    { "id": "settings", "name": "AI Settings…", "description": "Chooses the language model's server, its key and the model.", "edits": false },
-    { "id": "chat", "name": "AI Chat", "description": "Shows the chat with the language model.", "edits": false }
+    { "id": "settings", "name": "AI Settings…", "description": "Chooses the language model's server, its key and the model.", "edits": false }
   ]
 }
