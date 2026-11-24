@@ -3,7 +3,7 @@
 ## Set it up
 
 1. Start a model server, or get a key for a hosted one (see [Which model](#which-model) below).
-2. Choose **Plugins → AI Settings…**, or **Settings…** in the AI tab.
+2. Choose **Plugins → AI Settings…**.
 3. Pick a preset under **Server**, such as Ollama on this computer or a hosted service, and change what you need: the host, the port, the key and the model.
 
 ![The AI Settings dialog with the Ollama (this computer) preset: http, host 127.0.0.1, port 11434, path /v1, and the address requests go to](images/ai-settings.png)

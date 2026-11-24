@@ -4,7 +4,7 @@ The AI plugin for [OxiGuitar](https://github.com/mateusrdp/oxiguitar), a free, o
 
 In plain words: a language model (the kind of program behind ChatGPT, Claude or Gemini) can only write text, but with *tool calling* it can ask the plugin to read bars, write notes or run OxiGuitar's tools, and so work on your score. Run a model on your own computer (Ollama, llama.cpp, LM Studio) or use a hosted one with your own key. The [manual](https://mateusrdp.github.io/oxiguitar-ai/) explains the trade-offs, including what leaves your computer.
 
-- Plugin file `ai.oxp`, id `oxiguitar.ai`, shown as **AI assistant**. A tab **AI** in the right-hand area, beside Song, Track, Bar and Note; **Plugins → AI Settings…** (or **Settings…** in the tab) chooses the server.
+- Plugin file `ai.oxp`, id `oxiguitar.ai`, shown as **AI assistant**. A tab **AI** in the right-hand area, beside Song, Track, Bar and Note; **Plugins → AI Settings…** chooses the server.
 - **Any server that speaks OpenAI's chat completions protocol**, with tool calling:
   - on this computer: [Ollama](https://ollama.com), [llama.cpp](https://github.com/ggml-org/llama.cpp)'s `llama-server` (run it with `--jinja` for tool calls), [LM Studio](https://lmstudio.ai);
   - hosted, with your own key: OpenAI, Anthropic (Claude, through its OpenAI-compatible endpoint), Google (Gemini, the same), OpenRouter, or any other compatible server.
@@ -13,7 +13,7 @@ In plain words: a language model (the kind of program behind ChatGPT, Claude or 
 - **Your data.** A server on this computer (localhost, 127.0.0.1, ::1) is used at once. Before anything goes to a server anywhere else, the chat asks, naming it; what you allow is listed in AI Settings, where you can forget it. Only what you type and what the model reads of the score are sent, and only when you send a question. OxiGuitar itself never connects anywhere; this plugin does, as you set it up to.
 - Keys are kept as typed in OxiGuitar's `settings.json` (in your OxiGuitar folder), or read from an environment variable you name instead.
 
-<img src="docs/images/chat.png" alt="The AI tab in OxiGuitar's right-hand area: Settings… and New Chat, the conversation, the box to type in and Send" width="260"> <img src="docs/images/settings.png" alt="AI Settings, its Server page: the preset, the scheme, the host, port, path and query, and where requests go" width="420">
+<img src="docs/images/chat.png" alt="The AI tab in OxiGuitar's right-hand area: New Chat, the conversation, the box to type in and Send" width="260"> <img src="docs/images/settings.png" alt="AI Settings, its Server page: the preset, the scheme, the host, port, path and query, and where requests go" width="420">
 
 Small local models call tools less reliably and write weaker music than large hosted ones. Pick a model that supports tool calling (Qwen 3, Llama 3.1 and later, Mistral Small, GPT-OSS and the like on a local server).
 
