@@ -12,6 +12,7 @@
     { "id": "settings", "title": "AI Settings", "area": "dialog" }
   ],
   "events": ["score"],
+  "folders": ["skills"],
   "tools": [
     { "id": "settings", "name": "AI Settings…", "description": "Chooses the language model's server, its key and the model.", "edits": false }
   ]
