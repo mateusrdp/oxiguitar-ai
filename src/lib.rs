@@ -11,6 +11,7 @@
 //! - `settings`: where the server is and how to sign in;
 //! - `client`: the chat completions protocol, streamed or whole;
 //! - `notation`: the score as text, the model's way to read and write it;
+//! - `skills`: the user's own notes the model reads when they fit;
 //! - `tools`: what the model may do, on a copy of the score;
 //! - `agent`: the conversation and the model's turn, on a thread of its
 //!   own;
@@ -24,6 +25,7 @@ pub mod agent;
 pub mod client;
 pub mod notation;
 pub mod settings;
+pub mod skills;
 pub mod tools;
 pub mod ui;
 
@@ -33,6 +35,8 @@ pub const ID: &str = "oxiguitar.ai";
 pub const CHAT: &str = "chat";
 /// The settings dialog's id.
 pub const SETTINGS: &str = "settings";
+/// The shared folder the user's skills are in.
+pub const SKILLS: &str = "skills";
 
 /// The plugin.
 #[derive(Debug)]
@@ -40,23 +44,17 @@ pub struct AiPlugin {
     chat: ui::chat::ChatTab,
     settings: ui::settings_dialog::SettingsDialog,
     open_settings: Open,
-    open_chat: Open,
 }
 
-/// A tool that only shows something: the settings dialog, or the chat tab.
+/// The tool that shows the settings dialog.
 #[derive(Debug)]
 struct Open {
     host: Host,
-    dialog: bool,
 }
 
 impl Tool for Open {
     fn run(&self) -> Result<String, Error> {
-        if self.dialog {
-            self.host.open_dialog(SETTINGS)?;
-        } else {
-            self.host.show_tab(CHAT);
-        }
+        self.host.open_dialog(SETTINGS)?;
         Ok(String::new())
     }
 }
@@ -73,14 +71,7 @@ impl Plugin for AiPlugin {
                 Arc::new(host.clone()),
             ),
             settings: ui::settings_dialog::SettingsDialog::new(host.clone(), measure),
-            open_settings: Open {
-                host: host.clone(),
-                dialog: true,
-            },
-            open_chat: Open {
-                host: host.clone(),
-                dialog: false,
-            },
+            open_settings: Open { host },
         })
     }
 
@@ -95,7 +86,6 @@ impl Plugin for AiPlugin {
     fn tool(&self, id: &str) -> Option<&dyn Tool> {
         match id {
             SETTINGS => Some(&self.open_settings),
-            CHAT => Some(&self.open_chat),
             _ => None,
         }
     }

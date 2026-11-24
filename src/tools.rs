@@ -19,6 +19,7 @@ use oxiguitar_plugin::serde_json::{self, Map, Value, json};
 use oxiguitar_plugin::{Host, Selection2, ToolEntry};
 
 use crate::notation;
+use crate::skills::{self, Skill};
 
 /// What the tools reach of OxiGuitar: the host, or a fake in tests.
 pub trait Editor {
@@ -34,6 +35,10 @@ pub trait Editor {
     fn tools(&self) -> Result<Vec<ToolEntry>, String>;
     /// Runs one.
     fn run_tool(&self, owner: &str, tool: &str, options: Option<&Value>) -> Result<String, String>;
+    /// The folders the user's skills are in, the user's own first.
+    fn skill_folders(&self) -> Vec<std::path::PathBuf> {
+        Vec::new()
+    }
 }
 
 impl Editor for Host {
@@ -55,17 +60,22 @@ impl Editor for Host {
     fn run_tool(&self, owner: &str, tool: &str, options: Option<&Value>) -> Result<String, String> {
         Host::run_tool(self, owner, tool, options).map_err(|e| e.message)
     }
+    fn skill_folders(&self) -> Vec<std::path::PathBuf> {
+        self.folder(crate::SKILLS)
+            .map(|f| f.all().map(std::path::Path::to_path_buf).collect())
+            .unwrap_or_default()
+    }
 }
 
 /// The tools, as a chat completions request's `tools`.
-pub fn definitions() -> Value {
+pub fn definitions(skills: &[Skill]) -> Value {
     let f = |name: &str, description: &str, parameters: Value| {
         json!({"type": "function", "function": {
             "name": name, "description": description, "parameters": parameters}})
     };
     let none = json!({"type": "object", "properties": {}});
     let int = |d: &str| json!({"type": "integer", "minimum": 1, "description": d});
-    Value::Array(vec![
+    let mut tools = vec![
         f(
             "overview",
             "The open score in a few lines: title, tracks (instrument, strings and tuning), how many bars, and where the time, key, tempo and sections change. Read it first.",
@@ -148,7 +158,22 @@ pub fn definitions() -> Value {
                 "options": {"type": "object", "description": "Its options, as its schema says"}
             }, "required": ["owner", "tool"]}),
         ),
-    ])
+    ];
+    let names: Vec<&str> = skills
+        .iter()
+        .filter(|s| !s.always)
+        .map(|s| s.name.as_str())
+        .collect();
+    if !names.is_empty() {
+        tools.push(f(
+            "use_skill",
+            "Reads one of the user's skills, notes of their own on how they want things done. Call it when a request fits one, before you write.",
+            json!({"type": "object", "properties": {
+                "name": {"type": "string", "enum": names, "description": "The skill's name"}
+            }, "required": ["name"]}),
+        ));
+    }
+    Value::Array(tools)
 }
 
 /// What the plugin tells the model about OxiGuitar and its notation.
@@ -161,6 +186,7 @@ Your changes are kept as one change the user can undo with Edit, Undo. Say brief
 /// The tools' copy of the score while the model works, and what it changed.
 pub struct Workspace<'a> {
     editor: &'a dyn Editor,
+    skills: Vec<Skill>,
     copy: Option<(u64, Score2)>,
     dirty: bool,
     changes: Vec<String>,
@@ -171,10 +197,17 @@ impl<'a> Workspace<'a> {
     pub fn new(editor: &'a dyn Editor) -> Workspace<'a> {
         Workspace {
             editor,
+            skills: Vec::new(),
             copy: None,
             dirty: false,
             changes: Vec::new(),
         }
+    }
+
+    /// The same, with the user's skills the model may load.
+    pub fn with_skills(mut self, skills: Vec<Skill>) -> Workspace<'a> {
+        self.skills = skills;
+        self
     }
 
     fn score(&mut self) -> Result<&mut Score2, String> {
@@ -231,6 +264,24 @@ impl<'a> Workspace<'a> {
     fn dispatch(&mut self, name: &str, args: &Map<String, Value>) -> Result<String, String> {
         match name {
             "overview" => Ok(notation::overview(self.score()?)),
+            "use_skill" => {
+                let name = args.get("name").and_then(Value::as_str).unwrap_or_default();
+                match skills::find(&self.skills, name) {
+                    Some(skill) => Ok(skill.text.clone()),
+                    None => {
+                        let names: Vec<&str> = self
+                            .skills
+                            .iter()
+                            .filter(|s| !s.always)
+                            .map(|s| s.name.as_str())
+                            .collect();
+                        Err(format!(
+                            "there is no skill called {name:?}; the skills are {}",
+                            names.join(", ")
+                        ))
+                    }
+                }
+            }
             "read_bars" => {
                 let track = number(args, "track")?;
                 let from = number(args, "from_bar")?;
@@ -672,6 +723,8 @@ pub(crate) mod tests {
     pub(crate) struct Fake {
         pub(crate) score: Mutex<Option<(u64, Score2)>>,
         pub(crate) asked: Mutex<Vec<String>>,
+        /// The folders its skills are in.
+        pub(crate) skill_dirs: Mutex<Vec<std::path::PathBuf>>,
     }
 
     impl Fake {
@@ -698,6 +751,7 @@ pub(crate) mod tests {
             Fake {
                 score: Mutex::new(Some((7, s))),
                 asked: Mutex::default(),
+                skill_dirs: Mutex::default(),
             }
         }
         fn heard(&self, what: String) {
@@ -706,6 +760,9 @@ pub(crate) mod tests {
     }
 
     impl Editor for Fake {
+        fn skill_folders(&self) -> Vec<std::path::PathBuf> {
+            self.skill_dirs.lock().unwrap().clone()
+        }
         fn score(&self) -> Result<Option<(u64, Score2)>, String> {
             Ok(self.score.lock().unwrap().clone())
         }
@@ -765,7 +822,7 @@ pub(crate) mod tests {
 
     #[test]
     fn the_tools_are_well_formed() {
-        let defs = definitions();
+        let defs = definitions(&[]);
         let names: Vec<&str> = defs
             .as_array()
             .unwrap()
@@ -776,6 +833,50 @@ pub(crate) mod tests {
         for d in defs.as_array().unwrap() {
             assert_eq!(d["function"]["parameters"]["type"], "object");
         }
+    }
+
+    #[test]
+    fn the_model_loads_a_skill_by_name() {
+        let skills = vec![
+            Skill {
+                name: "blues".into(),
+                description: "for blues".into(),
+                always: false,
+                text: "Swing the eighths.".into(),
+            },
+            Skill {
+                name: "habits".into(),
+                description: "always".into(),
+                always: true,
+                text: "Short answers.".into(),
+            },
+        ];
+        let defs = definitions(&skills);
+        let tool = defs
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|d| d["function"]["name"] == "use_skill")
+            .unwrap();
+        assert_eq!(
+            tool["function"]["parameters"]["properties"]["name"]["enum"],
+            json!(["blues"])
+        );
+        assert!(
+            !definitions(&skills[1..]).to_string().contains("use_skill"),
+            "nothing to load, no tool"
+        );
+        let fake = Fake::with_song();
+        let mut w = Workspace::new(&fake).with_skills(skills);
+        assert_eq!(
+            w.call("use_skill", r#"{"name": "Blues"}"#),
+            "Swing the eighths."
+        );
+        let r = w.call("use_skill", r#"{"name": "jazz"}"#);
+        assert!(
+            r.starts_with("Error: there is no skill called \"jazz\"") && r.contains("blues"),
+            "{r}"
+        );
     }
 
     #[test]
@@ -813,6 +914,30 @@ pub(crate) mod tests {
         assert_eq!(score.master_bars[1].marker.as_ref().unwrap().letter, "A");
         assert_eq!(score.master_bars[1].tempo_changes[0].bpm, 90.0);
         assert_eq!(w.flush().unwrap(), None, "nothing more to hand back");
+    }
+
+    /// set_info changes the title, artist and album it is given, and only
+    /// those; with none of them it asks for one.
+    #[test]
+    fn set_info_changes_the_title_artist_and_album() {
+        let fake = Fake::with_song();
+        let mut w = Workspace::new(&fake);
+        assert_eq!(
+            w.call(
+                "set_info",
+                r#"{"title": "Night Ride", "artist": "The Frets"}"#
+            ),
+            "Set the title and artist."
+        );
+        assert!(
+            w.call("set_info", "{}")
+                .starts_with("Error: give a title, an artist or an album")
+        );
+        w.flush().unwrap().unwrap();
+        let (_, score) = fake.score.lock().unwrap().clone().unwrap();
+        assert_eq!(score.info.title, "Night Ride");
+        assert_eq!(score.info.artist, "The Frets");
+        assert_eq!(score.info.album, "");
     }
 
     #[test]

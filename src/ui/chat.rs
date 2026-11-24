@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Mateus Rocha de Paula and the OxiGuitar contributors
 
 //! The tab `chat`, in the window's right-hand area: one surface the plugin
-//! draws itself: Settings… and New Chat at the top, the conversation,
+//! draws itself: New Chat at the top, the conversation,
 //! scrolled with the wheel and following the newest, the box the user
 //! types in, and Send (Stop while the model works).
 
@@ -22,7 +22,7 @@ use crate::ui::text::{self, Measure, Outcome, Rect, TextBox};
 const SURFACE: &str = "chat";
 const PAD: f32 = 8.0;
 const BUTTONS: f32 = 28.0;
-/// The height of the row of Settings… and New Chat.
+/// The height of the row with New Chat.
 const HEADER: f32 = 30.0;
 const BODY: f32 = 13.0;
 const SMALL: f32 = 11.0;
@@ -30,7 +30,6 @@ const SMALL: f32 = 11.0;
 /// Something on the surface the pointer can use.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Action {
-    Settings,
     NewChat,
     Input,
     Send,
@@ -158,14 +157,6 @@ impl ChatTab {
 
     fn act(&self, action: Action, st: &mut State) {
         match action {
-            Action::Settings => {
-                if let Err(e) = self.host.open_dialog(crate::SETTINGS) {
-                    self.shared.lock().entries.push(Entry::Error(format!(
-                        "the settings can't open: {}",
-                        e.message
-                    )));
-                }
-            }
             Action::NewChat => {
                 self.shared.clear();
                 st.scroll = 0.0;
@@ -516,7 +507,7 @@ impl Tab for ChatTab {
                 format!("model {}", s.model.trim())
             };
             let hint = format!(
-                "Ask about the score, or ask for changes: \"write a bass line for bars 1 to 8\", \"fit every bar to its time signature\".\n\nServer: {} ({model}). Settings… chooses another.",
+                "Ask about the score, or ask for changes: \"write a bass line for bars 1 to 8\", \"fit every bar to its time signature\".\n\nServer: {} ({model}). Plugins → AI Settings… chooses another.",
                 s.server()
             );
             let mut b = Vec::new();
@@ -567,40 +558,35 @@ impl Tab for ChatTab {
             },
             Paint::Page,
         ));
-        let mut x = PAD;
-        for (label, action) in [
-            ("Settings…", Action::Settings),
-            ("New Chat", Action::NewChat),
-        ] {
-            let width = self
-                .measure
-                .edges(label, BODY)
-                .last()
-                .copied()
-                .unwrap_or(60.0)
-                + 16.0;
-            let r = Rect {
-                x,
-                y: 4.0,
-                w: width,
-                h: HEADER - 8.0,
-            };
-            let lit = st.hover == Some(action);
-            items.extend(text::frame(
-                r,
-                1.0,
-                if lit { Paint::Accent } else { Paint::Muted },
-            ));
-            items.push(text::text(
-                label,
-                r.x + 8.0,
-                r.y + r.h / 2.0 + BODY * 0.35,
-                BODY,
-                if lit { Paint::Accent } else { Paint::Ink },
-            ));
-            hits.push((r, action));
-            x += width + 6.0;
-        }
+        let label = "New Chat";
+        let action = Action::NewChat;
+        let width = self
+            .measure
+            .edges(label, BODY)
+            .last()
+            .copied()
+            .unwrap_or(60.0)
+            + 16.0;
+        let r = Rect {
+            x: PAD,
+            y: 4.0,
+            w: width,
+            h: HEADER - 8.0,
+        };
+        let lit = st.hover == Some(action);
+        items.extend(text::frame(
+            r,
+            1.0,
+            if lit { Paint::Accent } else { Paint::Muted },
+        ));
+        items.push(text::text(
+            label,
+            r.x + 8.0,
+            r.y + r.h / 2.0 + BODY * 0.35,
+            BODY,
+            if lit { Paint::Accent } else { Paint::Ink },
+        ));
+        hits.push((r, action));
         items.push(Item::Line {
             from: Point::new(0.0, HEADER - 0.5),
             to: Point::new(w, HEADER - 0.5),

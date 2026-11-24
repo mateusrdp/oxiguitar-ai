@@ -2,7 +2,7 @@
   "interface": "1.14",
   "id": "oxiguitar.ai",
   "name": "AI assistant",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A chat with a language model, on this computer (llama.cpp, Ollama, LM Studio) or hosted (OpenAI, Anthropic, Gemini, any OpenAI-compatible server), that reads and writes the score and runs OxiGuitar's tools.",
   "authors": ["Mateus Rocha de Paula", "The OxiGuitar contributors"],
   "license": "GPL-3.0-or-later",
@@ -12,8 +12,8 @@
     { "id": "settings", "title": "AI Settings", "area": "dialog" }
   ],
   "events": ["score"],
+  "folders": ["skills"],
   "tools": [
-    { "id": "settings", "name": "AI Settings…", "description": "Chooses the language model's server, its key and the model.", "edits": false },
-    { "id": "chat", "name": "AI Chat", "description": "Shows the chat with the language model.", "edits": false }
+    { "id": "settings", "name": "AI Settings…", "description": "Chooses the language model's server, its key and the model.", "edits": false }
   ]
 }

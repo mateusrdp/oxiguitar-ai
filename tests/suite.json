@@ -1,0 +1,6 @@
+{
+  "repository": "mateusrdp/oxiguitar-ai",
+  "plugins": [
+    {"name": "ai", "package": "oxiguitar-ai-plugin", "library": "oxiguitar_ai_plugin"}
+  ]
+}

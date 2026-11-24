@@ -4,9 +4,18 @@ All notable changes to the AI plugin. The format follows [Keep a Changelog](http
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-11-24
+
+### Added
+
+- **Every test with one command** (mateusrdp/oxiguitar#273): `scripts/test-all.py` builds and runs all of this repository's tests, and tests the plugin against the newest OxiGuitar release, with a progress bar, a summary to paste into an issue and a log to diagnose from. The manual has a Features page naming the tests of every feature (CI checks it) and a Testing page.
+- **Skills** (#10): notes of your own the model reads when they fit, such as how you write a shuffle or what you never want in a bass line. Put a Markdown file in the `skills` folder beside OxiGuitar's `plugins` folder (`NAME.md` or `NAME/SKILL.md`, with an optional header giving a `name`, a `description` and `always: true`). The model is told each skill's name and description and loads the text when your request fits, so a small local model's context isn't spent on notes it doesn't need. The manual's "How to use it" page says where the folder is and how to write one.
+
 ### Changed
 
+- **Plugins → AI Chat is gone** (mateusrdp/oxiguitar-ai#12): it did nothing, and the AI tab is already in the sidebar. The **Settings…** button is gone from the AI tab too, to clear the screen; **Plugins → AI Settings…** is the one way in.
 - Built against the SDK of OxiGuitar 0.21.5 (its tag `v0.21.5`, interface 1.14) instead of a commit of its development branch. Nothing changes in how the plugin works.
+- **The manual explains the ideas behind the plugin** (its overview, with pictures), shows how to use it with screenshots, says in Architecture and strategy what it can't do yet, what is left out on purpose and where help is wanted, and has a Credits page listing every project it uses, with links and thanks. The README has a plain-words introduction and a Credits section.
 
 ## [0.1.0] - 2026-11-20
 
