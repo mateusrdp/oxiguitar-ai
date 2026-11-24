@@ -16,6 +16,7 @@ use oxiguitar_plugin::serde_json::{Value, json};
 
 use crate::client::Client;
 use crate::settings::Settings;
+use crate::skills::{self, Skill};
 use crate::tools::{self, Editor, Workspace};
 
 /// One thing the chat shows.
@@ -99,9 +100,11 @@ impl Shared {
     }
 }
 
-/// The instructions the model gets: the plugin's, then the user's own.
-pub fn system(settings: &Settings) -> Value {
+/// The instructions the model gets: the plugin's, the user's skills, then
+/// the user's own instructions.
+pub fn system(settings: &Settings, skills: &[Skill]) -> Value {
     let mut text = tools::INSTRUCTIONS.to_owned();
+    text.push_str(&skills::prompt(skills));
     if !settings.instructions.trim().is_empty() {
         text.push_str("\n\nThe user's own instructions:\n");
         text.push_str(settings.instructions.trim());
@@ -167,7 +170,16 @@ fn turn(
 ) {
     let ours = |c: &Conversation| c.generation == generation && !stop.load(Ordering::Relaxed);
     let client = Client::new(settings.clone());
-    let mut work = Workspace::new(editor);
+    let loaded = skills::load(&editor.skill_folders());
+    if !loaded.problems.is_empty() {
+        let mut c = shared.lock();
+        if c.generation == generation {
+            c.entries
+                .extend(loaded.problems.iter().cloned().map(Entry::Error));
+        }
+    }
+    let skills = loaded.skills;
+    let mut work = Workspace::new(editor).with_skills(skills.clone());
     let steps = settings.max_steps.clamp(1, 100);
     let mut finished = false;
     for _ in 0..steps {
@@ -176,12 +188,11 @@ fn turn(
             if !ours(&c) {
                 break;
             }
-            let mut m = vec![system(settings)];
+            let mut m = vec![system(settings, &skills)];
             m.extend(c.messages.iter().cloned());
             m
         };
-        let body =
-            json!({"messages": messages, "tools": tools::definitions(), "tool_choice": "auto"});
+        let body = json!({"messages": messages, "tools": tools::definitions(&skills), "tool_choice": "auto"});
         // The answer streams into one entry; the chat is drawn again at
         // most every 80 ms while it does.
         {
@@ -301,6 +312,10 @@ pub fn describe(name: &str, arguments: &str) -> String {
     };
     match name {
         "overview" => "Read the score".to_owned(),
+        "use_skill" => format!(
+            "Read the skill \"{}\"",
+            a.get("name").and_then(Value::as_str).unwrap_or_default()
+        ),
         "read_bars" => format!(
             "Read {} of track {}",
             bars(n("from_bar"), n("to_bar")),
@@ -464,6 +479,71 @@ mod tests {
     }
 
     #[test]
+    fn a_skill_is_listed_then_loaded_when_the_model_asks() {
+        let dir =
+            std::env::temp_dir().join(format!("oxiguitar-ai-agent-skills-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("blues.md"),
+            "---\ndescription: how I write blues\n---\nSwing the eighths.",
+        )
+        .unwrap();
+        std::fs::write(dir.join("empty.md"), "").unwrap();
+        let call = r#"{"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"s1","type":"function","function":{"name":"use_skill","arguments":"{\"name\": \"blues\"}"}}]}}]}"#;
+        let done = r#"{"choices":[{"message":{"role":"assistant","content":"Done."}}]}"#;
+        let (port, sent) = server(vec![
+            (200, "application/json", call.to_owned()),
+            (200, "application/json", done.to_owned()),
+        ]);
+        let shared = Arc::new(Shared::default());
+        let fake = Arc::new(crate::tools::tests::Fake::with_song());
+        *fake.skill_dirs.lock().unwrap() = vec![dir.clone()];
+        let (redraw, redrawn) = redraws();
+        ask(
+            &shared,
+            settings(port, false),
+            fake,
+            "A blues".into(),
+            redraw,
+        );
+        wait(&shared, &redrawn);
+        let entries = shared.lock().entries.clone();
+        assert!(matches!(&entries[0], Entry::User(_)), "{entries:?}");
+        assert!(
+            matches!(&entries[1], Entry::Error(e) if e.contains("empty.md") && e.contains("no text")),
+            "{entries:?}"
+        );
+        assert_eq!(entries[2], Entry::Tool("Read the skill \"blues\"".into()));
+        let one = sent.recv().unwrap();
+        assert!(one.contains("blues: how I write blues"), "{one}");
+        assert!(one.contains(r#""name":"use_skill""#), "{one}");
+        assert!(
+            !one.contains("Swing the eighths."),
+            "the text waits to be asked for"
+        );
+        let two = sent.recv().unwrap();
+        assert!(two.contains("Swing the eighths."), "{two}");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn the_skills_come_after_the_plugins_instructions_and_before_the_users() {
+        let s = Settings {
+            instructions: "Answer in Portuguese.".into(),
+            ..Settings::default()
+        };
+        let skill = skills::parse("---\nalways: true\n---\nNo open strings.", "habits").unwrap();
+        let text = system(&s, &[skill])["content"].as_str().unwrap().to_owned();
+        let at = |needle: &str| {
+            text.find(needle)
+                .unwrap_or_else(|| panic!("{needle} in {text}"))
+        };
+        assert!(at("No open strings.") < at("Answer in Portuguese."));
+        assert!(at("You are the assistant") < at("No open strings."));
+    }
+
+    #[test]
     fn a_whole_answer_and_a_servers_error_show_in_the_chat() {
         let whole =
             r#"{"choices":[{"message":{"role":"assistant","content":"Hello."}}]}"#.to_owned();
@@ -530,6 +610,10 @@ mod tests {
             describe("run_tool", r#"{"owner": "oxiguitar", "tool": "fit-bars"}"#),
             "Ran the tool \"fit-bars\""
         );
+        assert_eq!(
+            describe("use_skill", r#"{"name": "blues"}"#),
+            "Read the skill \"blues\""
+        );
         assert_eq!(describe("nope", "x"), "Used nope");
     }
 
@@ -549,7 +633,7 @@ mod tests {
             instructions: "Answer in Portuguese.".into(),
             ..Settings::default()
         };
-        let text = system(&s)["content"].as_str().unwrap().to_owned();
+        let text = system(&s, &[])["content"].as_str().unwrap().to_owned();
         assert!(text.starts_with("You are the assistant inside OxiGuitar"));
         assert!(text.ends_with("Answer in Portuguese."));
     }

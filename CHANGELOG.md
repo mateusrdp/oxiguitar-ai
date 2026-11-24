@@ -7,6 +7,7 @@ All notable changes to the AI plugin. The format follows [Keep a Changelog](http
 ### Added
 
 - **Every test with one command** (mateusrdp/oxiguitar#273): `scripts/test-all.py` builds and runs all of this repository's tests, and tests the plugin against the newest OxiGuitar release, with a progress bar, a summary to paste into an issue and a log to diagnose from. The manual has a Features page naming the tests of every feature (CI checks it) and a Testing page.
+- **Skills** (#10): notes of your own the model reads when they fit, such as how you write a shuffle or what you never want in a bass line. Put a Markdown file in the `skills` folder beside OxiGuitar's `plugins` folder (`NAME.md` or `NAME/SKILL.md`, with an optional header giving a `name`, a `description` and `always: true`). The model is told each skill's name and description and loads the text when your request fits, so a small local model's context isn't spent on notes it doesn't need. The manual's "How to use it" page says where the folder is and how to write one.
 
 ### Changed
 

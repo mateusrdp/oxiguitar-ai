@@ -21,11 +21,25 @@ mateusrdp/oxiguitar#227, as a proof of concept (Mateus, 20 Nov 2026): a plugin t
 - `notation.rs`: the score as the model reads and writes it. A bar is its beats separated by `|`; a beat is a duration (`w h q e s t x`, dots, `/3`) and what sounds: `r`, `string/fret` (string 1 the highest), `3/x` dead, `~` tied, a pitch (`C4`, put on the lowest fret free when the track has strings), `k36` a drum's General MIDI key, chords in brackets. The same notation both ways, so the model writes what it reads. `write_bars` checks everything before changing anything (strings, frets, a string twice in a beat, keys only on drum tracks) and reports bars that don't add up, which it still writes, as the editor does.
 - `tools.rs`: the model's tools (`definitions`) and the instructions (`INSTRUCTIONS`), and `Workspace`, which works on a copy of the score and hands it back once (`flush`) at the end of the answer, or before a tool of OxiGuitar's runs or the selection moves, so they see the changes. `Editor` is the host's side, a fake in tests.
 - `agent.rs`: the conversation (`Shared`: what the chat shows and what the model is sent) and the model's turn, on a thread of its own: the request, the answer streamed into the chat (drawn again at most every 80 ms), each tool call run and its result sent back, until the model answers without a call or its steps run out; Stop and New Chat end a turn (a generation number keeps an old turn's results out).
+- `skills.rs` (mateusrdp/oxiguitar-ai#10): the user's own notes. A skill is `NAME.md` or `NAME/SKILL.md` in the `skills` folder (a shared folder of the manifest, beside `plugins`, so `Host::folder("skills")` gives the user's and the system's), with an optional header (`name`, `description`, `always`). `load` reads the folders when a question is sent, the user's first, and the first of a name wins; a file over 64 KiB, empty or not UTF-8 text is left out and said in the chat. `prompt` tells the model each on-request skill's name and description, and holds the text of the `always` ones; the `use_skill` tool, offered only when there is a skill to load, gives the rest on request, so a small model's context holds only what it asked for. The layout follows other assistants' skills so a folder can be shared; nothing else of theirs (scripts, resources, tool permissions) is read.
 - `ui/text.rs`: text measured with OxiGuitar's own font (`HostRequest::MeasureText`, cached), wrapped, and the plugin's text box: caret, selection, typing and pasting (as text from the surface's sink), copying (`Host::copy`), Enter to send and Shift + Enter for a new line, one line or several, shown or hidden.
 - `ui/chat.rs`: the tab: a New Chat button (the settings are in the Plugins menu only), and a surface the plugin draws: the conversation, newest at the bottom, scrolled with the wheel or Page Up and Down, each answer with Copy; the question waiting for the user's permission; the text box; Send, or Stop while the model works.
 - `ui/settings_dialog.rs`: OxiGuitar's widgets where they fit, the plugin's text boxes for the key (hidden unless Show the Key is ticked), more headers and the instructions; the server's models listed on a thread of its own.
 
+## Skills (mateusrdp/oxiguitar-ai#10, 24 Nov 2026)
+
+The issue asks for a way to use skills, important with local models, so the user can reuse composition preferences and habit directives. Taken as: text files of the user's own, which the model loads when they fit. Not decided by Mateus yet; open to change:
+
+- **Files, not settings.** One box of instructions already exists (AI Settings); skills are many notes, each for one kind of request, kept as files the user edits in any editor, copies and shares.
+- **Loaded on request.** Listing every note in every request would fill a small local model's context. The model gets names and descriptions and asks for the text (`use_skill`), as it asks for the score's bars.
+- **`always: true`** for habits that hold for every request; the cost is the text in every request.
+- **Plain text only.** A skill holds no scripts or tools: the model's tools stay the plugin's own, and nothing a skill says runs by itself.
+- **Read at each question**, so edits apply at once and nothing is cached or watched.
+- Skills go to the server with the chat, so the privacy rule covers them: a server away from this computer gets them only once allowed.
+
 ## Later, maybe
+
+- Skills from the chat ("save this as a skill"), and a skills page in AI Settings listing what was found.
 
 - The conversation saved with the score (plugin data on the score, kept in the `.oxg`).
 - A keyring for keys.
