@@ -4,6 +4,8 @@ All notable changes to the AI plugin. The format follows [Keep a Changelog](http
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-25
+
 ### Changed
 
 - **The chat and AI Settings are Slint views** (mateusrdp/oxiguitar#346): `ui/ai.slint` draws the AI tab (`Chat`) and the AI Settings window (`SettingsWindow`), with Slint's own text boxes, scroll view, lists and tabs. The plugin no longer draws on surfaces, measures text or keeps a text box of its own (`ui/text.rs` is gone), and no longer uses OxiGuitar's tabs and dialogs, which OxiGuitar 1.0 retires. The settings' six pages are tabs of a window that can be resized, with its own OK and Cancel. The conversation follows the newest answer unless you scroll up; Enter sends, Shift + Enter starts a new line, Escape stops the model. Get a key opens the provider's page in the browser. Needs OxiGuitar 0.23.0 or later (interface 1.16).
