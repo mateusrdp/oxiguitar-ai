@@ -1,124 +1,157 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Mateus Rocha de Paula and the OxiGuitar contributors
 
-//! The tab `chat`, in the window's right-hand area: one surface the plugin
-//! draws itself: New Chat at the top, the conversation,
-//! scrolled with the wheel and following the newest, the box the user
-//! types in, and Send (Stop while the model works).
+//! The view `chat`, a panel in the window's right-hand area (`Chat` in
+//! `ui/ai.slint`): New Chat at the top, the conversation, following the
+//! newest, the box the user types in, and Send (Stop while the model
+//! works). The model's thread sets the view again as it writes.
 
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::Arc;
 
-use oxiguitar_plugin::display::{Item, Paint, Point};
-use oxiguitar_plugin::{
-    Cursor, Error, Host, KeyName, PointerKind, Row, Surface, Tab, TabContent, TabEvent, Widget,
-};
+use oxiguitar_plugin::{Error, Host, Value};
 
 use crate::agent::{self, Entry, Shared};
 use crate::settings::Settings;
 use crate::tools::Editor;
-use crate::ui::text::{self, Measure, Outcome, Rect, TextBox};
 
-/// The surface's id.
-const SURFACE: &str = "chat";
-const PAD: f32 = 8.0;
-const BUTTONS: f32 = 28.0;
-/// The height of the row with New Chat.
-const HEADER: f32 = 30.0;
-const BODY: f32 = 13.0;
-const SMALL: f32 = 11.0;
+/// The view's id in the manifest.
+pub const VIEW: &str = crate::CHAT;
 
-/// Something on the surface the pointer can use.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Action {
-    NewChat,
-    Input,
-    Send,
-    Stop,
-    Copy(usize),
-    Allow,
-    Deny,
-}
-
-/// What the surface remembers between events.
-#[derive(Debug)]
-struct State {
-    size: (f32, f32),
-    input: TextBox,
-    focused: bool,
-    /// How far up from the newest the conversation is scrolled, in pixels.
-    scroll: f32,
-    /// How far it can be.
-    most: f32,
-    hits: Vec<(Rect, Action)>,
-    hover: Option<Action>,
-    pressed: Option<Action>,
-    input_rect: Rect,
-}
-
-/// The tab.
-pub struct ChatTab {
+/// The chat.
+pub struct Chat {
     host: Host,
     shared: Arc<Shared>,
-    measure: Arc<dyn Measure + Send + Sync>,
     editor: Arc<dyn Editor + Send + Sync>,
-    state: Mutex<State>,
 }
 
-impl std::fmt::Debug for ChatTab {
+impl std::fmt::Debug for Chat {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ChatTab").finish_non_exhaustive()
+        f.debug_struct("Chat").finish_non_exhaustive()
     }
 }
 
-impl ChatTab {
-    /// The tab, measuring with `measure` and changing the score through
-    /// `editor`.
-    pub fn new(
-        host: Host,
-        shared: Arc<Shared>,
-        measure: Arc<dyn Measure + Send + Sync>,
-        editor: Arc<dyn Editor + Send + Sync>,
-    ) -> ChatTab {
-        ChatTab {
+/// What the model said, without the thinking some models write out
+/// (`<think>…</think>`).
+pub fn visible(s: &str) -> String {
+    let mut out = String::new();
+    let mut rest = s;
+    loop {
+        match rest.find("<think>") {
+            Some(i) => {
+                out.push_str(&rest[..i]);
+                match rest[i..].find("</think>") {
+                    Some(j) => rest = &rest[i + j + "</think>".len()..],
+                    None => break,
+                }
+            }
+            None => {
+                out.push_str(rest);
+                break;
+            }
+        }
+    }
+    out.trim().to_owned()
+}
+
+/// What shows while the conversation is empty: what to ask, and where.
+pub fn hint(s: &Settings) -> String {
+    let model = if s.model.trim().is_empty() {
+        "no model chosen yet".to_owned()
+    } else {
+        format!("model {}", s.model.trim())
+    };
+    format!(
+        "Ask about the score, or ask for changes: \"write a bass line for bars 1 to 8\", \"fit every bar to its time signature\".\n\nServer: {} ({model}). Plugins → AI Settings… chooses another.",
+        s.server()
+    )
+}
+
+fn entry(kind: &str, text: String, can_copy: bool) -> Value {
+    Value::Struct(vec![
+        ("kind".into(), Value::String(kind.into())),
+        ("text".into(), Value::String(text)),
+        ("can-copy".into(), Value::Bool(can_copy)),
+    ])
+}
+
+/// What the view shows of the conversation; `hint` is asked for only
+/// while there is nothing else.
+pub fn properties(shared: &Shared, hint: &dyn Fn() -> String) -> Vec<(String, Value)> {
+    let c = shared.lock();
+    let entries: Vec<Value> = c
+        .entries
+        .iter()
+        .map(|e| match e {
+            Entry::User(s) => entry("user", s.clone(), false),
+            Entry::Assistant(s) => {
+                let shown = visible(s);
+                let copy = !shown.is_empty();
+                entry("assistant", if copy { shown } else { "…".into() }, copy)
+            }
+            Entry::Tool(s) => entry("tool", s.clone(), false),
+            Entry::Notice(s) => entry("notice", s.clone(), false),
+            Entry::Error(s) => entry("error", s.clone(), false),
+        })
+        .collect();
+    let waiting = c.waiting.as_ref().map(|(server, _)| {
+        format!(
+            "{server} isn't on this computer. Sending this question sends the conversation and what the model reads of the score there. Allow it?"
+        )
+    });
+    let empty = entries.is_empty() && waiting.is_none();
+    let (running, status) = (c.running, c.status.clone());
+    drop(c);
+    vec![
+        ("entries".into(), Value::List(entries)),
+        ("running".into(), Value::Bool(running)),
+        ("status".into(), Value::String(status)),
+        (
+            "hint".into(),
+            Value::String(if empty { hint() } else { String::new() }),
+        ),
+        ("waiting".into(), Value::String(waiting.unwrap_or_default())),
+    ]
+}
+
+impl Chat {
+    /// The chat, changing the score through `editor`.
+    pub fn new(host: Host, shared: Arc<Shared>, editor: Arc<dyn Editor + Send + Sync>) -> Chat {
+        Chat {
             host,
             shared,
-            measure,
             editor,
-            state: Mutex::new(State {
-                size: (300.0, 400.0),
-                input: TextBox::new("", true, true, false),
-                focused: false,
-                scroll: 0.0,
-                most: 0.0,
-                hits: Vec::new(),
-                hover: None,
-                pressed: None,
-                input_rect: Rect::default(),
-            }),
         }
     }
 
-    fn state(&self) -> MutexGuard<'_, State> {
-        self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    /// Sets the view to the conversation as it is.
+    pub fn show(&self) -> Result<(), Error> {
+        self.redraw()();
+        Ok(())
     }
 
+    /// What the model's thread calls as it writes: the view set again.
     fn redraw(&self) -> Arc<dyn Fn() + Send + Sync> {
-        let host = self.host.clone();
-        Arc::new(move || host.redraw(crate::CHAT))
+        let (host, shared) = (self.host.clone(), self.shared.clone());
+        Arc::new(move || {
+            let hint = || hint(&Settings::load(&host));
+            let _ = host.set_view(VIEW, properties(&shared, &hint));
+        })
     }
 
-    /// The user sends what the box holds.
-    fn submit(&self, st: &mut State) {
-        let question = st.input.text.trim().to_owned();
+    /// The user sends a question.
+    fn submit(&self, question: &str) -> Result<(), Error> {
+        let question = question.trim().to_owned();
         if question.is_empty() || self.shared.lock().running {
-            return;
+            return Ok(());
         }
-        st.input.set("");
-        st.scroll = 0.0;
+        self.host.set_view(
+            VIEW,
+            vec![("question".into(), Value::String(String::new()))],
+        )?;
         let settings = Settings::load(&self.host);
         if !settings.may_send() {
             self.shared.lock().waiting = Some((settings.server(), question));
-            return;
+            return Ok(());
         }
         agent::ask(
             &self.shared,
@@ -127,6 +160,7 @@ impl ChatTab {
             question,
             self.redraw(),
         );
+        Ok(())
     }
 
     /// The user allows the server they were asked about, and the question
@@ -155,579 +189,27 @@ impl ChatTab {
         );
     }
 
-    fn act(&self, action: Action, st: &mut State) {
-        match action {
-            Action::NewChat => {
-                self.shared.clear();
-                st.scroll = 0.0;
-            }
-            Action::Input => {}
-            Action::Send => self.submit(st),
-            Action::Stop => self.shared.stop(),
-            Action::Copy(i) => {
-                let copied = match self.shared.lock().entries.get(i) {
+    /// A callback of the view.
+    pub fn callback(&self, callback: &str, args: &[Value]) -> Result<(), Error> {
+        match (callback, args.first()) {
+            ("send", Some(Value::String(question))) => self.submit(question)?,
+            ("new-chat", _) => self.shared.clear(),
+            ("stop", _) => self.shared.stop(),
+            ("copy", Some(Value::Number(i))) if *i >= 0.0 => {
+                let copied = match self.shared.lock().entries.get(*i as usize) {
                     Some(Entry::Assistant(s)) => Some(visible(s)),
                     _ => None,
                 };
                 if let Some(t) = copied {
-                    let _ = self.host.copy(&t);
+                    self.host.copy(&t)?;
                 }
+                return Ok(());
             }
-            Action::Allow => self.allow(),
-            Action::Deny => {
-                self.shared.lock().waiting = None;
-            }
+            ("allow", _) => self.allow(),
+            ("deny", _) => self.shared.lock().waiting = None,
+            _ => return Ok(()),
         }
-    }
-}
-
-/// What the model said, without the thinking some models write out
-/// (`<think>…</think>`).
-pub fn visible(s: &str) -> String {
-    let mut out = String::new();
-    let mut rest = s;
-    loop {
-        match rest.find("<think>") {
-            Some(i) => {
-                out.push_str(&rest[..i]);
-                match rest[i..].find("</think>") {
-                    Some(j) => rest = &rest[i + j + "</think>".len()..],
-                    None => break,
-                }
-            }
-            None => {
-                out.push_str(rest);
-                break;
-            }
-        }
-    }
-    out.trim().to_owned()
-}
-
-/// A block of the conversation laid out: its items, from y 0, and height.
-struct Block {
-    items: Vec<Item>,
-    height: f32,
-    hits: Vec<(Rect, Action)>,
-}
-
-/// Where and how a paragraph is drawn.
-#[derive(Clone, Copy)]
-struct Pen {
-    x: f32,
-    y: f32,
-    size: f32,
-    width: f32,
-    paint: Paint,
-}
-
-/// Draws `s` wrapped with `pen`; how tall it is.
-fn paragraph(measure: &dyn Measure, s: &str, pen: Pen, out: &mut Vec<Item>) -> f32 {
-    let (paragraphs, lines) = text::wrap(measure, s, pen.size, pen.width);
-    let lh = pen.size * 1.4;
-    for (i, l) in lines.iter().enumerate() {
-        out.push(text::text(
-            text::line_text(&paragraphs, l).trim_end(),
-            pen.x,
-            pen.y + pen.size + i as f32 * lh,
-            pen.size,
-            pen.paint,
-        ));
-    }
-    lines.len() as f32 * lh
-}
-
-fn pen(x: f32, y: f32, size: f32, width: f32, paint: Paint) -> Pen {
-    Pen {
-        x,
-        y,
-        size,
-        width,
-        paint,
-    }
-}
-
-fn button(label: &str, r: Rect, hover: bool, primary: bool, out: &mut Vec<Item>) {
-    out.push(text::rect(
-        r,
-        if primary || hover {
-            Paint::Accent
-        } else {
-            Paint::Muted
-        },
-    ));
-    out.push(Item::Text {
-        text: label.to_owned(),
-        at: Point::new(r.x + r.w / 2.0, r.y + r.h / 2.0 + BODY * 0.35),
-        size: BODY,
-        font: oxiguitar_plugin::display::Font::Sans,
-        anchor: oxiguitar_plugin::display::Anchor::Middle,
-        paint: Paint::Page,
-    });
-}
-
-fn block(
-    measure: &dyn Measure,
-    entry: &Entry,
-    index: usize,
-    width: f32,
-    hover: Option<Action>,
-) -> Block {
-    let mut items = Vec::new();
-    let mut hits = Vec::new();
-    let inner = width - 2.0 * PAD;
-    let h = match entry {
-        Entry::User(s) => {
-            items.push(text::text("You", PAD, SMALL, SMALL, Paint::Accent));
-            SMALL
-                + 4.0
-                + paragraph(
-                    measure,
-                    s,
-                    pen(PAD, SMALL + 4.0, BODY, inner, Paint::Ink),
-                    &mut items,
-                )
-        }
-        Entry::Assistant(s) => {
-            let shown = visible(s);
-            items.push(text::text("AI", PAD, SMALL, SMALL, Paint::Muted));
-            if !shown.is_empty() {
-                let copy = Rect {
-                    x: width - PAD - 40.0,
-                    y: 0.0,
-                    w: 40.0,
-                    h: SMALL + 3.0,
-                };
-                let lit = hover == Some(Action::Copy(index));
-                items.push(text::text(
-                    "Copy",
-                    copy.x + 8.0,
-                    SMALL,
-                    SMALL,
-                    if lit { Paint::Accent } else { Paint::Muted },
-                ));
-                hits.push((copy, Action::Copy(index)));
-            }
-            let body = if shown.is_empty() { "…" } else { &shown };
-            SMALL
-                + 4.0
-                + paragraph(
-                    measure,
-                    body,
-                    pen(PAD, SMALL + 4.0, BODY, inner, Paint::Ink),
-                    &mut items,
-                )
-        }
-        Entry::Tool(s) => paragraph(
-            measure,
-            &format!("· {s}"),
-            pen(PAD, 0.0, SMALL, inner, Paint::Muted),
-            &mut items,
-        ),
-        Entry::Notice(s) => paragraph(
-            measure,
-            s,
-            pen(PAD, 0.0, SMALL, inner, Paint::Muted),
-            &mut items,
-        ),
-        Entry::Error(s) => {
-            let mut inside = Vec::new();
-            let h = paragraph(
-                measure,
-                s,
-                pen(PAD + 4.0, 3.0, BODY, inner - 8.0, Paint::Ink),
-                &mut inside,
-            ) + 6.0;
-            items.push(text::rect(
-                Rect {
-                    x: PAD,
-                    y: 0.0,
-                    w: inner,
-                    h,
-                },
-                Paint::Warning,
-            ));
-            items.extend(inside);
-            h
-        }
-    };
-    Block {
-        items,
-        height: h,
-        hits,
-    }
-}
-
-fn shifted(item: Item, dy: f32) -> Item {
-    let mv = |p: Point| Point::new(p.x, p.y + dy);
-    match item {
-        Item::Line {
-            from,
-            to,
-            width,
-            paint,
-        } => Item::Line {
-            from: mv(from),
-            to: mv(to),
-            width,
-            paint,
-        },
-        Item::Rect {
-            at,
-            width,
-            height,
-            paint,
-        } => Item::Rect {
-            at: mv(at),
-            width,
-            height,
-            paint,
-        },
-        Item::Text {
-            text,
-            at,
-            size,
-            font,
-            anchor,
-            paint,
-        } => Item::Text {
-            text,
-            at: mv(at),
-            size,
-            font,
-            anchor,
-            paint,
-        },
-        other => other,
-    }
-}
-
-impl Tab for ChatTab {
-    fn content(&self) -> TabContent {
-        let measure = &*self.measure;
-        let mut st = self.state();
-        let (w, h) = st.size;
-        let (entries, running, status, waiting) = {
-            let c = self.shared.lock();
-            (
-                c.entries.clone(),
-                c.running,
-                c.status.clone(),
-                c.waiting.clone(),
-            )
-        };
-        let mut items = vec![text::rect(
-            Rect {
-                x: 0.0,
-                y: 0.0,
-                w,
-                h,
-            },
-            Paint::Page,
-        )];
-        let mut hits = Vec::new();
-        // The bottom: the box, then the buttons' row.
-        let inner = TextBox::inner(w - 2.0 * PAD);
-        let box_h = st.input.height(measure, inner, 6);
-        let buttons_y = h - PAD - BUTTONS;
-        let input = Rect {
-            x: PAD,
-            y: buttons_y - PAD - box_h,
-            w: w - 2.0 * PAD,
-            h: box_h,
-        };
-        let top = input.y - PAD;
-        // The conversation, laid out from its top, shown from its bottom.
-        let mut blocks: Vec<Block> = entries
-            .iter()
-            .enumerate()
-            .map(|(i, e)| block(measure, e, i, w, st.hover))
-            .collect();
-        if let Some((server, _)) = &waiting {
-            let mut b = Vec::new();
-            let text_h = paragraph(
-                measure,
-                &format!(
-                    "{server} isn't on this computer. Sending this question sends the conversation and what the model reads of the score there. Allow it?"
-                ),
-                pen(PAD, 0.0, BODY, w - 2.0 * PAD, Paint::Ink),
-                &mut b,
-            );
-            let allow = Rect {
-                x: PAD,
-                y: text_h + 4.0,
-                w: 70.0,
-                h: 24.0,
-            };
-            let deny = Rect {
-                x: PAD + 78.0,
-                y: text_h + 4.0,
-                w: 70.0,
-                h: 24.0,
-            };
-            button(
-                "Allow",
-                allow,
-                st.hover == Some(Action::Allow),
-                true,
-                &mut b,
-            );
-            button(
-                "Cancel",
-                deny,
-                st.hover == Some(Action::Deny),
-                false,
-                &mut b,
-            );
-            blocks.push(Block {
-                items: b,
-                height: text_h + 32.0,
-                hits: vec![(allow, Action::Allow), (deny, Action::Deny)],
-            });
-        }
-        if running && !status.is_empty() {
-            let mut b = Vec::new();
-            let hgt = paragraph(
-                measure,
-                &status,
-                pen(PAD, 0.0, SMALL, w - 2.0 * PAD, Paint::Muted),
-                &mut b,
-            );
-            blocks.push(Block {
-                items: b,
-                height: hgt,
-                hits: Vec::new(),
-            });
-        }
-        if blocks.is_empty() {
-            let s = Settings::load(&self.host);
-            let model = if s.model.trim().is_empty() {
-                "no model chosen yet".to_owned()
-            } else {
-                format!("model {}", s.model.trim())
-            };
-            let hint = format!(
-                "Ask about the score, or ask for changes: \"write a bass line for bars 1 to 8\", \"fit every bar to its time signature\".\n\nServer: {} ({model}). Plugins → AI Settings… chooses another.",
-                s.server()
-            );
-            let mut b = Vec::new();
-            let hgt = paragraph(
-                measure,
-                &hint,
-                pen(PAD, 0.0, BODY, w - 2.0 * PAD, Paint::Muted),
-                &mut b,
-            );
-            blocks.push(Block {
-                items: b,
-                height: hgt,
-                hits: Vec::new(),
-            });
-        }
-        let gap = 10.0;
-        let room = top - HEADER;
-        let total: f32 = blocks.iter().map(|b| b.height + gap).sum::<f32>() + PAD;
-        st.most = (total - room).max(0.0);
-        st.scroll = st.scroll.clamp(0.0, st.most);
-        // Short conversations start at the top, long ones show their end.
-        let mut y = HEADER
-            + PAD
-            + if total < room {
-                0.0
-            } else {
-                room - total + st.scroll
-            };
-        for b in blocks {
-            if y + b.height > 0.0 && y < top + 50.0 {
-                items.extend(b.items.into_iter().map(|i| shifted(i, y)));
-                for (r, a) in b.hits {
-                    let r = Rect { y: r.y + y, ..r };
-                    if r.y + r.h <= top && r.y >= HEADER {
-                        hits.push((r, a));
-                    }
-                }
-            }
-            y += b.height + gap;
-        }
-        // The top row covers what the conversation drew above its room.
-        items.push(text::rect(
-            Rect {
-                x: 0.0,
-                y: 0.0,
-                w,
-                h: HEADER,
-            },
-            Paint::Page,
-        ));
-        let label = "New Chat";
-        let action = Action::NewChat;
-        let width = self
-            .measure
-            .edges(label, BODY)
-            .last()
-            .copied()
-            .unwrap_or(60.0)
-            + 16.0;
-        let r = Rect {
-            x: PAD,
-            y: 4.0,
-            w: width,
-            h: HEADER - 8.0,
-        };
-        let lit = st.hover == Some(action);
-        items.extend(text::frame(
-            r,
-            1.0,
-            if lit { Paint::Accent } else { Paint::Muted },
-        ));
-        items.push(text::text(
-            label,
-            r.x + 8.0,
-            r.y + r.h / 2.0 + BODY * 0.35,
-            BODY,
-            if lit { Paint::Accent } else { Paint::Ink },
-        ));
-        hits.push((r, action));
-        items.push(Item::Line {
-            from: Point::new(0.0, HEADER - 0.5),
-            to: Point::new(w, HEADER - 0.5),
-            width: 1.0,
-            paint: Paint::Muted,
-        });
-        // The bottom panel covers what the conversation drew past its room.
-        items.push(text::rect(
-            Rect {
-                x: 0.0,
-                y: top,
-                w,
-                h: h - top,
-            },
-            Paint::Page,
-        ));
-        if st.most > 0.0 && st.scroll > 0.0 {
-            items.push(text::text(
-                "More below: scroll down",
-                PAD,
-                top - 2.0,
-                SMALL,
-                Paint::Accent,
-            ));
-        }
-        let focused = st.focused;
-        st.input
-            .draw(input, focused, "Ask the AI…", measure, &mut items);
-        st.input_rect = input;
-        hits.push((input, Action::Input));
-        let send = Rect {
-            x: w - PAD - 80.0,
-            y: buttons_y,
-            w: 80.0,
-            h: BUTTONS,
-        };
-        if running {
-            button(
-                "Stop",
-                send,
-                st.hover == Some(Action::Stop),
-                false,
-                &mut items,
-            );
-            hits.push((send, Action::Stop));
-        } else {
-            let ready = !st.input.text.trim().is_empty();
-            button(
-                "Send",
-                send,
-                st.hover == Some(Action::Send),
-                ready,
-                &mut items,
-            );
-            hits.push((send, Action::Send));
-        }
-        let cursor = match st.hover {
-            Some(Action::Input) => Cursor::Text,
-            Some(_) => Cursor::Pointer,
-            None => Cursor::Default,
-        };
-        st.hits = hits;
-        TabContent {
-            rows: vec![Row {
-                widgets: vec![Widget::Surface(Surface {
-                    id: SURFACE.into(),
-                    height: 0.0,
-                    items,
-                    keys: true,
-                    cursor,
-                })],
-            }],
-        }
-    }
-
-    fn on(&self, widget: &str, event: TabEvent) -> Result<(), Error> {
-        if widget != SURFACE {
-            return Ok(());
-        }
-        let measure = &*self.measure;
-        let mut st = self.state();
-        let hit = |st: &State, at: Point| {
-            st.hits
-                .iter()
-                .find(|(r, _)| r.contains(at))
-                .map(|(_, a)| *a)
-        };
-        match event {
-            TabEvent::Resized { width, height } => st.size = (width.max(80.0), height.max(80.0)),
-            TabEvent::Focus(on) => st.focused = on,
-            TabEvent::Wheel { dy, .. } => {
-                st.scroll = (st.scroll - dy).clamp(0.0, st.most);
-            }
-            TabEvent::Pointer(p) => match p.kind {
-                PointerKind::Down => {
-                    let action = hit(&st, p.at);
-                    st.pressed = action;
-                    if action == Some(Action::Input) {
-                        let r = st.input_rect;
-                        st.input.click(p.at, r, measure, false);
-                    }
-                }
-                PointerKind::Drag => {
-                    if st.pressed == Some(Action::Input) {
-                        let r = st.input_rect;
-                        st.input.drag(p.at, r, measure);
-                    }
-                }
-                PointerKind::Up => {
-                    let action = hit(&st, p.at);
-                    if let Some(a) =
-                        action.filter(|a| Some(*a) == st.pressed && *a != Action::Input)
-                    {
-                        self.act(a, &mut st);
-                    }
-                    st.pressed = None;
-                }
-                PointerKind::Move => st.hover = hit(&st, p.at),
-                PointerKind::Leave => st.hover = None,
-            },
-            TabEvent::Typed(s) => {
-                st.input.typed(&s);
-            }
-            TabEvent::Key(k) => match k.name {
-                KeyName::PageUp => st.scroll = (st.scroll + 200.0).min(st.most),
-                KeyName::PageDown => st.scroll = (st.scroll - 200.0).max(0.0),
-                KeyName::Escape if self.shared.lock().running => self.shared.stop(),
-                _ => {
-                    let inner = TextBox::inner(st.input_rect.w);
-                    match st.input.key(k, measure, inner) {
-                        Outcome::Submit => self.submit(&mut st),
-                        Outcome::Copy(t) => {
-                            let _ = self.host.copy(&t);
-                        }
-                        Outcome::Changed | Outcome::Nothing => {}
-                    }
-                }
-            },
-            _ => {}
-        }
-        Ok(())
+        self.show()
     }
 }
 
@@ -735,11 +217,93 @@ impl Tab for ChatTab {
 mod tests {
     use super::*;
 
+    fn get<'a>(p: &'a [(String, Value)], name: &str) -> &'a Value {
+        &p.iter().find(|(n, _)| n == name).unwrap().1
+    }
+
     #[test]
     fn thinking_is_left_out_of_what_shows() {
         assert_eq!(visible("<think>hmm</think>\nThe answer."), "The answer.");
         assert_eq!(visible("A <think>x</think>B"), "A B");
         assert_eq!(visible("<think>still thinking"), "");
         assert_eq!(visible("plain"), "plain");
+    }
+
+    /// The conversation as the view shows it: each entry's kind and words,
+    /// Copy only on what the model said, the hint only while it is empty,
+    /// a server to allow as a question.
+    #[test]
+    fn the_view_shows_the_conversation() {
+        let shared = Shared::default();
+        let hint = || "Ask me.".to_owned();
+        let p = properties(&shared, &hint);
+        assert_eq!(get(&p, "hint"), &Value::String("Ask me.".into()));
+        assert_eq!(get(&p, "entries"), &Value::List(Vec::new()));
+        {
+            let mut c = shared.lock();
+            c.entries.push(Entry::User("What key?".into()));
+            c.entries.push(Entry::Tool("read bars 1 to 4".into()));
+            c.entries
+                .push(Entry::Assistant("<think>hmm</think>G major.".into()));
+            c.entries.push(Entry::Assistant("<think>still".into()));
+            c.entries
+                .push(Entry::Error("the server didn't answer".into()));
+            c.running = true;
+            c.status = "Reading the score…".into();
+        }
+        let p = properties(&shared, &|| panic!("no hint once it isn't empty"));
+        let Value::List(entries) = get(&p, "entries") else {
+            panic!()
+        };
+        let shown: Vec<_> = entries
+            .iter()
+            .map(|e| {
+                let Value::Struct(f) = e else { panic!() };
+                (f[0].1.clone(), f[1].1.clone(), f[2].1.clone())
+            })
+            .collect();
+        let s = |t: &str| Value::String(t.into());
+        assert_eq!(
+            shown,
+            [
+                (s("user"), s("What key?"), Value::Bool(false)),
+                (s("tool"), s("read bars 1 to 4"), Value::Bool(false)),
+                (s("assistant"), s("G major."), Value::Bool(true)),
+                (s("assistant"), s("…"), Value::Bool(false)),
+                (
+                    s("error"),
+                    s("the server didn't answer"),
+                    Value::Bool(false)
+                ),
+            ]
+        );
+        assert_eq!(get(&p, "running"), &Value::Bool(true));
+        assert_eq!(get(&p, "hint"), &Value::String(String::new()));
+        shared.clear();
+        shared.lock().waiting = Some(("api.example.com".into(), "Hi".into()));
+        let p = properties(&shared, &|| panic!("no hint while a server waits"));
+        assert!(
+            matches!(get(&p, "waiting"), Value::String(w) if w.starts_with("api.example.com isn't on this computer"))
+        );
+    }
+
+    /// Sending: an empty question does nothing; one for a server away from
+    /// this computer waits to be allowed, and Cancel forgets it; New Chat
+    /// starts again.
+    #[test]
+    fn a_question_for_a_server_away_waits_and_new_chat_clears() {
+        let shared = Arc::new(Shared::default());
+        let chat = Chat::new(Host::detached(), shared.clone(), Arc::new(Host::detached()));
+        chat.callback("send", &[Value::String("  ".into())])
+            .unwrap();
+        assert!(shared.lock().entries.is_empty() && !shared.lock().running);
+        shared.lock().waiting = Some(("api.example.com".into(), "Hi".into()));
+        chat.callback("deny", &[]).unwrap();
+        assert!(shared.lock().waiting.is_none());
+        shared.lock().entries.push(Entry::User("hi".into()));
+        chat.callback("new-chat", &[]).unwrap();
+        assert!(shared.lock().entries.is_empty());
+        // Copy of something that isn't the model's copies nothing.
+        chat.callback("copy", &[Value::Number(7.0)]).unwrap();
     }
 }

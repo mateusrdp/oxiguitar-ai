@@ -1,5 +1,5 @@
 {
-  "interface": "1.14",
+  "interface": "1.16",
   "id": "oxiguitar.ai",
   "name": "AI assistant",
   "version": "0.2.0",
@@ -7,9 +7,10 @@
   "authors": ["Mateus Rocha de Paula", "The OxiGuitar contributors"],
   "license": "GPL-3.0-or-later",
   "homepage": "https://github.com/mateusrdp/oxiguitar-ai",
-  "tabs": [
-    { "id": "chat", "title": "AI", "area": "right" },
-    { "id": "settings", "title": "AI Settings", "area": "dialog" }
+  "ui": "ui/ai.slint",
+  "views": [
+    { "id": "chat", "component": "Chat", "place": "right", "title": "AI" },
+    { "id": "settings", "component": "SettingsWindow", "place": "window" }
   ],
   "events": ["score"],
   "folders": ["skills"],

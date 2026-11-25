@@ -1,0 +1,506 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Mateus Rocha de Paula and the OxiGuitar contributors
+
+// The AI plugin's views (plugin interface 1.16): the chat, a panel in the
+// window's right-hand area, and the AI Settings window. The plugin sets
+// every property (src/ui/chat.rs, src/ui/settings_window.rs) and hears what
+// the user does.
+
+import {
+    Button, CheckBox, ComboBox, LineEdit, Palette, ScrollView, StandardListView, TabWidget, TextEdit,
+} from "std-widgets.slint";
+
+// An entry of the conversation: its kind ("user", "assistant", "tool",
+// "notice" or "error"), its words, and whether Copy is offered.
+export struct Entry {
+    kind: string,
+    text: string,
+    can-copy: bool,
+}
+
+export component Chat {
+    in property <[Entry]> entries;
+    // The model is working: Stop in place of Send.
+    in property <bool> running;
+    // What it is doing, while it works.
+    in property <string> status;
+    // Shown while the conversation is empty: what to ask, and the server.
+    in property <string> hint;
+    // A server away from this computer to allow, as a question; empty when
+    // nothing waits for it.
+    in property <string> waiting;
+    in-out property <string> question;
+    callback new-chat();
+    callback send(string);
+    callback stop();
+    callback copy(int);
+    callback allow();
+    callback deny();
+
+    // Follow the newest unless the user scrolled up.
+    property <bool> follow: true;
+
+    VerticalLayout {
+        padding: 8px;
+        spacing: 8px;
+        HorizontalLayout {
+            alignment: start;
+            Button {
+                text: "New Chat";
+                clicked => { root.new-chat(); }
+            }
+        }
+        conversation := ScrollView {
+            vertical-stretch: 1;
+            changed content-height => {
+                if (root.follow) {
+                    self.content-y = min(0px, self.visible-height - self.content-height);
+                }
+            }
+            changed visible-height => {
+                if (root.follow) {
+                    self.content-y = min(0px, self.visible-height - self.content-height);
+                }
+            }
+            scrolled => {
+                root.follow = self.content-y <= self.visible-height - self.content-height + 8px;
+            }
+            VerticalLayout {
+                spacing: 10px;
+                padding-right: 14px;
+                alignment: start;
+                if root.entries.length == 0 && root.waiting == "": Text {
+                    text: root.hint;
+                    wrap: word-wrap;
+                    opacity: 0.7;
+                }
+                for entry[i] in root.entries: VerticalLayout {
+                    spacing: 4px;
+                    if entry.kind == "user" || entry.kind == "assistant": HorizontalLayout {
+                        Text {
+                            text: entry.kind == "user" ? "You" : "AI";
+                            font-size: 11px;
+                            color: entry.kind == "user" ? Palette.accent-background : Palette.foreground;
+                            opacity: entry.kind == "user" ? 1 : 0.7;
+                        }
+                        if entry.can-copy: copy := TouchArea {
+                            horizontal-stretch: 0;
+                            mouse-cursor: pointer;
+                            clicked => { root.copy(i); }
+                            HorizontalLayout {
+                                alignment: end;
+                                Text {
+                                    text: "Copy";
+                                    font-size: 11px;
+                                    color: copy.has-hover ? Palette.accent-background : Palette.foreground;
+                                    opacity: copy.has-hover ? 1 : 0.7;
+                                }
+                            }
+                        }
+                    }
+                    if entry.kind == "error": Rectangle {
+                        background: #f0b42940;
+                        border-radius: 4px;
+                        HorizontalLayout {
+                            padding: 4px;
+                            Text {
+                                text: entry.text;
+                                wrap: word-wrap;
+                            }
+                        }
+                    }
+                    if entry.kind != "error": Text {
+                        text: entry.kind == "tool" ? "· " + entry.text : entry.text;
+                        wrap: word-wrap;
+                        font-size: entry.kind == "tool" || entry.kind == "notice" ? 11px : 13px;
+                        opacity: entry.kind == "tool" || entry.kind == "notice" ? 0.7 : 1;
+                    }
+                }
+                if root.waiting != "": VerticalLayout {
+                    spacing: 4px;
+                    Text {
+                        text: root.waiting;
+                        wrap: word-wrap;
+                    }
+                    HorizontalLayout {
+                        alignment: start;
+                        spacing: 8px;
+                        Button {
+                            text: "Allow";
+                            primary: true;
+                            clicked => { root.allow(); }
+                        }
+                        Button {
+                            text: "Cancel";
+                            clicked => { root.deny(); }
+                        }
+                    }
+                }
+                if root.running && root.status != "": Text {
+                    text: root.status;
+                    wrap: word-wrap;
+                    font-size: 11px;
+                    opacity: 0.7;
+                }
+            }
+        }
+        // Enter sends, Shift+Enter starts a new line, Escape stops the
+        // model.
+        FocusScope {
+            height: 76px;
+            capture-key-pressed(event) => {
+                if (event.text == Key.Return && !event.modifiers.shift) {
+                    if (!root.running && root.question != "") {
+                        root.send(root.question);
+                    }
+                    return accept;
+                }
+                if (event.text == Key.Escape && root.running) {
+                    root.stop();
+                    return accept;
+                }
+                reject
+            }
+            TextEdit {
+                width: 100%;
+                height: 100%;
+                text <=> root.question;
+                placeholder-text: "Ask the AI…";
+                wrap: word-wrap;
+            }
+        }
+        HorizontalLayout {
+            alignment: end;
+            if !root.running: Button {
+                text: "Send";
+                primary: root.question != "";
+                enabled: root.question != "";
+                clicked => { root.send(root.question); }
+            }
+            if root.running: Button {
+                text: "Stop";
+                clicked => { root.stop(); }
+            }
+        }
+    }
+}
+
+// A text of the settings: its label and its box, one line or several.
+component Field {
+    in property <string> label;
+    in property <string> placeholder;
+    in property <int> lines: 1;
+    in property <bool> hidden;
+    in-out property <string> text;
+    callback edited(string);
+    VerticalLayout {
+        spacing: 4px;
+        Text { text: root.label; }
+        if root.lines == 1: LineEdit {
+            text <=> root.text;
+            placeholder-text: root.placeholder;
+            input-type: root.hidden ? InputType.password : InputType.text;
+            edited(t) => { root.edited(t); }
+        }
+        if root.lines > 1: TextEdit {
+            height: root.lines * 20px + 12px;
+            text <=> root.text;
+            placeholder-text: root.placeholder;
+            wrap: no-wrap;
+            edited(t) => { root.edited(t); }
+        }
+    }
+}
+
+component Note inherits Text {
+    wrap: word-wrap;
+    opacity: 0.7;
+}
+
+export component SettingsWindow inherits Window {
+    title: "AI Settings";
+    preferred-width: 560px;
+    preferred-height: 560px;
+    // Server
+    in property <[string]> presets;
+    in-out property <int> preset;
+    in-out property <int> scheme;
+    in-out property <string> host;
+    in-out property <string> port;
+    in-out property <string> url-path;
+    in-out property <string> query;
+    // "Requests go to …", or why the address isn't complete.
+    in property <string> address;
+    // Whether what is asked leaves this computer; empty when it doesn't.
+    in property <string> away;
+    // Key
+    in-out property <string> key;
+    in-out property <bool> show-key;
+    // The preset's page for keys, and its name; empty when it has none.
+    in property <string> keys-at;
+    in-out property <string> key-env;
+    // Headers
+    in-out property <string> auth-header;
+    in-out property <string> auth-prefix;
+    in-out property <string> headers;
+    // Model
+    in-out property <string> model;
+    in property <bool> loading;
+    in property <string> status;
+    in property <[StandardListViewItem]> models;
+    in-out property <int> model-picked: -1;
+    // Answers
+    in-out property <string> temperature;
+    in-out property <string> max-tokens;
+    in-out property <string> timeout;
+    in-out property <string> steps;
+    in-out property <bool> stream;
+    // Instructions
+    in-out property <string> instructions;
+    in property <[StandardListViewItem]> allowed;
+    in-out property <int> server-picked: -1;
+    // A number that isn't one, as a sentence; empty when all are.
+    in property <string> problem;
+    callback preset-chosen(int);
+    callback scheme-chosen(int);
+    // A text changed: its id and what it holds now.
+    callback edited(string, string);
+    callback show-key-toggled(bool);
+    callback get-key();
+    callback list-models();
+    callback model-chosen(int);
+    callback stream-toggled(bool);
+    callback server-chosen(int);
+    callback forget-server();
+    callback ok();
+    callback cancel();
+
+    VerticalLayout {
+        padding: 12px;
+        spacing: 8px;
+        TabWidget {
+            vertical-stretch: 1;
+            Tab {
+                title: "Server";
+                VerticalLayout {
+                    padding: 8px;
+                    spacing: 8px;
+                    alignment: start;
+                    ComboBox {
+                        model: root.presets;
+                        current-index <=> root.preset;
+                        selected => { root.preset-chosen(self.current-index); }
+                    }
+                    ComboBox {
+                        model: ["http", "https"];
+                        current-index <=> root.scheme;
+                        selected => { root.scheme-chosen(self.current-index); }
+                    }
+                    Field {
+                        label: "Host";
+                        placeholder: "Host name or address";
+                        text <=> root.host;
+                        edited(t) => { root.edited("host", t); }
+                    }
+                    Field {
+                        label: "Port";
+                        placeholder: "Such as 443";
+                        text <=> root.port;
+                        edited(t) => { root.edited("port", t); }
+                    }
+                    Field {
+                        label: "Path";
+                        placeholder: "Such as /v1";
+                        text <=> root.url-path;
+                        edited(t) => { root.edited("path", t); }
+                    }
+                    Field {
+                        label: "Query";
+                        placeholder: "Usually empty; api-version=… for Azure";
+                        text <=> root.query;
+                        edited(t) => { root.edited("query", t); }
+                    }
+                    Note { text: root.address; }
+                    if root.away != "": Note { text: root.away; }
+                }
+            }
+            Tab {
+                title: "Key";
+                VerticalLayout {
+                    padding: 8px;
+                    spacing: 8px;
+                    alignment: start;
+                    Field {
+                        label: "Key (personal access token)";
+                        placeholder: "Paste it from the provider's site";
+                        hidden: !root.show-key;
+                        text <=> root.key;
+                        edited(t) => { root.edited("key", t); }
+                    }
+                    CheckBox {
+                        text: "Show the key";
+                        checked <=> root.show-key;
+                        toggled => { root.show-key-toggled(self.checked); }
+                    }
+                    if root.keys-at != "": TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { root.get-key(); }
+                        Text {
+                            text: root.keys-at;
+                            color: Palette.accent-background;
+                        }
+                    }
+                    Field {
+                        label: "Or the environment variable that holds it";
+                        placeholder: "Such as OPENAI_API_KEY";
+                        text <=> root.key-env;
+                        edited(t) => { root.edited("key-env", t); }
+                    }
+                }
+            }
+            Tab {
+                title: "Headers";
+                VerticalLayout {
+                    padding: 8px;
+                    spacing: 8px;
+                    alignment: start;
+                    Field {
+                        label: "The key's header";
+                        placeholder: "Authorization";
+                        text <=> root.auth-header;
+                        edited(t) => { root.edited("auth-header", t); }
+                    }
+                    Field {
+                        label: "Before the key";
+                        placeholder: "Bearer (and a space)";
+                        text <=> root.auth-prefix;
+                        edited(t) => { root.edited("auth-prefix", t); }
+                    }
+                    Field {
+                        label: "More headers, one a line";
+                        placeholder: "Name: value";
+                        lines: 4;
+                        text <=> root.headers;
+                        edited(t) => { root.edited("headers", t); }
+                    }
+                }
+            }
+            Tab {
+                title: "Model";
+                VerticalLayout {
+                    padding: 8px;
+                    spacing: 8px;
+                    Field {
+                        label: "Model";
+                        placeholder: "Its name, as the server knows it";
+                        text <=> root.model;
+                        edited(t) => { root.edited("model", t); }
+                    }
+                    HorizontalLayout {
+                        alignment: start;
+                        Button {
+                            text: root.loading ? "Asking…" : "List the Server's Models";
+                            enabled: !root.loading;
+                            clicked => { root.list-models(); }
+                        }
+                    }
+                    if root.status != "": Note { text: root.status; }
+                    StandardListView {
+                        vertical-stretch: 1;
+                        visible: root.models.length > 0;
+                        model: root.models;
+                        current-item <=> root.model-picked;
+                        current-item-changed(i) => { root.model-chosen(i); }
+                    }
+                }
+            }
+            Tab {
+                title: "Answers";
+                VerticalLayout {
+                    padding: 8px;
+                    spacing: 8px;
+                    alignment: start;
+                    Field {
+                        label: "Temperature, 0 to 2";
+                        placeholder: "Empty: the server's";
+                        text <=> root.temperature;
+                        edited(t) => { root.edited("temperature", t); }
+                    }
+                    Field {
+                        label: "Most tokens an answer";
+                        placeholder: "Empty: the server's";
+                        text <=> root.max-tokens;
+                        edited(t) => { root.edited("max-tokens", t); }
+                    }
+                    Field {
+                        label: "Seconds a request may take";
+                        placeholder: "300";
+                        text <=> root.timeout;
+                        edited(t) => { root.edited("timeout", t); }
+                    }
+                    Field {
+                        label: "Tool calls an answer may make";
+                        placeholder: "16";
+                        text <=> root.steps;
+                        edited(t) => { root.edited("steps", t); }
+                    }
+                    CheckBox {
+                        text: "Show answers as they are written";
+                        checked <=> root.stream;
+                        toggled => { root.stream-toggled(self.checked); }
+                    }
+                }
+            }
+            Tab {
+                title: "Instructions";
+                VerticalLayout {
+                    padding: 8px;
+                    spacing: 8px;
+                    Field {
+                        label: "Your instructions for the model";
+                        placeholder: "Such as: answer in Portuguese; keep to the first five frets";
+                        lines: 5;
+                        text <=> root.instructions;
+                        edited(t) => { root.edited("instructions", t); }
+                    }
+                    if root.allowed.length > 0: Text {
+                        text: "Servers away from this computer you allowed";
+                    }
+                    StandardListView {
+                        vertical-stretch: 1;
+                        visible: root.allowed.length > 0;
+                        model: root.allowed;
+                        current-item <=> root.server-picked;
+                        current-item-changed(i) => { root.server-chosen(i); }
+                    }
+                    if root.allowed.length > 0: HorizontalLayout {
+                        alignment: start;
+                        Button {
+                            text: "Forget the Selected Server";
+                            enabled: root.server-picked >= 0;
+                            clicked => { root.forget-server(); }
+                        }
+                    }
+                }
+            }
+        }
+        if root.problem != "": Text {
+            text: root.problem;
+            wrap: word-wrap;
+            color: Palette.foreground;
+        }
+        HorizontalLayout {
+            alignment: end;
+            spacing: 8px;
+            Button {
+                text: "OK";
+                primary: true;
+                clicked => { root.ok(); }
+            }
+            Button {
+                text: "Cancel";
+                clicked => { root.cancel(); }
+            }
+        }
+    }
+}

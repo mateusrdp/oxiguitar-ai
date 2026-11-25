@@ -2,7 +2,7 @@
 
 ## Requirements
 
-- OxiGuitar 0.21.5 or later (plugin interface 1.14). See [the OxiGuitar manual](https://mateusrdp.github.io/oxiguitar/).
+- OxiGuitar 0.23.0 or later (plugin interface 1.16). See [the OxiGuitar manual](https://mateusrdp.github.io/oxiguitar/).
 - A language model server, on your computer or hosted.
 - Windows, macOS or Linux.
 

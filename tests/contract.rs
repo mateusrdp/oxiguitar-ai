@@ -2,15 +2,16 @@
 // Copyright (C) 2026 Mateus Rocha de Paula and the OxiGuitar contributors
 
 //! The contract suite: builds this crate as an `.oxp` file and checks it
-//! through OxiGuitar's own plugin host, as the app would load it: every
-//! widget of the chat tab and the settings dialog used once, the surfaces
-//! with a bit of everything they hear. `cargo test` runs it with the rest.
+//! through OxiGuitar's own plugin host, as the app would load it, with
+//! every view shown and closed, and a question asked in the chat. `cargo
+//! test` runs it with the rest.
 
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
-use oxiguitar_host::api::tab::{TabEvent, Widget};
-use oxiguitar_host::{Plugins, SharedSettings, TabId, Unheard};
+use oxiguitar_host::api::view::Value;
+use oxiguitar_host::{Core, Level, Plugins, SharedSettings, ViewId};
 
 /// This plugin as the `.oxp` file we ship (a debug build), built once.
 fn ours() -> &'static Path {
@@ -31,52 +32,92 @@ fn the_plugin_file_keeps_the_contract() {
     assert!(report.ok(), "failed: {:#?}", report.failed);
 }
 
-/// Through the host: the chat tab is a surface that takes the keyboard; text typed shows in it; a question with no score
-/// and no server to ask ends in a sentence, never a crash.
+/// What the window shows: the properties last set on each view.
+#[derive(Default)]
+struct Window {
+    properties: Mutex<Vec<(String, String, Value)>>,
+}
+
+impl Core for Window {
+    fn notify(&self, _level: Level, _text: String) {}
+
+    fn set_view(&self, view: &ViewId, properties: Vec<(String, Value)>) {
+        let mut kept = self.properties.lock().unwrap();
+        for (name, value) in properties {
+            kept.retain(|(v, n, _)| !(*v == view.view && *n == name));
+            kept.push((view.view.clone(), name, value));
+        }
+    }
+}
+
+impl Window {
+    fn get(&self, view: &str, name: &str) -> Option<Value> {
+        self.properties
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(v, n, _)| v == view && n == name)
+            .map(|p| p.2.clone())
+    }
+}
+
+/// Through the host: the chat panel shows its hint, a question sent shows
+/// in the conversation and clears the box, and with no score and no
+/// server to ask it ends in a sentence, never a crash.
 #[test]
-fn the_chat_takes_typing_through_the_host() {
+fn a_question_goes_through_the_host() {
     let scratch =
         std::env::temp_dir().join(format!("oxiguitar-ai-contract-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&scratch);
     std::fs::create_dir_all(&scratch).unwrap();
     std::fs::copy(ours(), scratch.join("ai.oxp")).unwrap();
+    let window = Arc::new(Window::default());
+    // Nothing answers on this port, on this computer.
+    let settings = SharedSettings::default();
+    settings
+        .set(
+            "oxiguitar.ai",
+            oxiguitar_plugin::serde_json::json!({"host": "127.0.0.1", "port": 9, "timeout": 10}),
+        )
+        .unwrap();
     let plugins = Plugins::discover(
         std::slice::from_ref(&scratch),
-        SharedSettings::default(),
-        "x11",
-        Arc::new(Unheard),
+        settings,
+        oxiguitar_host::NO_DISPLAY,
+        window.clone(),
     );
-    let chat = TabId {
+    let chat = ViewId {
         plugin: "oxiguitar.ai".into(),
-        tab: "chat".into(),
+        view: "chat".into(),
     };
-    let content = plugins.tab_content(&chat).unwrap();
-    let Some(Widget::Surface(s)) = content.widget("chat") else {
-        panic!("{content:?}")
+    plugins.view_shown(&chat, None);
+    assert!(
+        matches!(window.get("chat", "hint"), Some(Value::String(h)) if h.starts_with("Ask about the score"))
+    );
+    plugins.view_callback(
+        &chat,
+        "send",
+        vec![Value::String("What key is this in?".into())],
+    );
+    assert_eq!(
+        window.get("chat", "question"),
+        Some(Value::String(String::new()))
+    );
+    let ended = |w: &Window| match w.get("chat", "entries") {
+        Some(Value::List(entries)) => {
+            let shown = format!("{entries:?}");
+            assert!(shown.contains("What key is this in?"), "{shown}");
+            w.get("chat", "running") == Some(Value::Bool(false)) && entries.len() > 1
+        }
+        _ => false,
     };
-    assert!(s.keys && s.height == 0.0);
-    plugins
-        .tab_event(
-            &chat,
-            "chat",
-            TabEvent::Resized {
-                width: 320.0,
-                height: 500.0,
-            },
-        )
-        .unwrap();
-    plugins
-        .tab_event(&chat, "chat", TabEvent::Focus(true))
-        .unwrap();
-    let typed = plugins
-        .tab_event(
-            &chat,
-            "chat",
-            TabEvent::Typed("What key is this in?".into()),
-        )
-        .unwrap();
-    assert!(typed.problems().is_empty());
-    let shown = format!("{typed:?}");
-    assert!(shown.contains("What key is this in?"), "{shown}");
+    let start = Instant::now();
+    while !ended(&window) {
+        assert!(
+            start.elapsed() < Duration::from_secs(60),
+            "the turn never ended"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
     let _ = std::fs::remove_dir_all(&scratch);
 }

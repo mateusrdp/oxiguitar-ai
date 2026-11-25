@@ -4,7 +4,7 @@ The AI plugin for [OxiGuitar](https://github.com/mateusrdp/oxiguitar), a free, o
 
 In plain words: a language model (the kind of program behind ChatGPT, Claude or Gemini) can only write text, but with *tool calling* it can ask the plugin to read bars, write notes or run OxiGuitar's tools, and so work on your score. Run a model on your own computer (Ollama, llama.cpp, LM Studio) or use a hosted one with your own key. The [manual](https://mateusrdp.github.io/oxiguitar-ai/) explains the trade-offs, including what leaves your computer.
 
-- Plugin file `ai.oxp`, id `oxiguitar.ai`, shown as **AI assistant**. A tab **AI** in the right-hand area, beside Song, Track, Bar and Note; **Plugins → AI Settings…** chooses the server.
+- Plugin file `ai.oxp`, id `oxiguitar.ai`, shown as **AI assistant**. A tab **AI** in the right-hand area, beside Song, Track, Bar and Note; **Plugins → AI Settings…** chooses the server. Both are drawn in Slint (`ui/ai.slint`), as OxiGuitar's own UI is.
 - **Any server that speaks OpenAI's chat completions protocol**, with tool calling:
   - on this computer: [Ollama](https://ollama.com), [llama.cpp](https://github.com/ggml-org/llama.cpp)'s `llama-server` (run it with `--jinja` for tool calls), [LM Studio](https://lmstudio.ai);
   - hosted, with your own key: OpenAI, Anthropic (Claude, through its OpenAI-compatible endpoint), Google (Gemini, the same), OpenRouter, or any other compatible server.
@@ -14,7 +14,7 @@ In plain words: a language model (the kind of program behind ChatGPT, Claude or 
 - **Your data.** A server on this computer (localhost, 127.0.0.1, ::1) is used at once. Before anything goes to a server anywhere else, the chat asks, naming it; what you allow is listed in AI Settings, where you can forget it. Only what you type, what the model reads of the score and the skills it uses are sent, and only when you send a question. OxiGuitar itself never connects anywhere; this plugin does, as you set it up to.
 - Keys are kept as typed in OxiGuitar's `settings.json` (in your OxiGuitar folder), or read from an environment variable you name instead.
 
-<img src="docs/images/chat.png" alt="The AI tab in OxiGuitar's right-hand area: New Chat, the conversation, the box to type in and Send" width="260"> <img src="docs/images/settings.png" alt="AI Settings, its Server page: the preset, the scheme, the host, port, path and query, and where requests go" width="420">
+<img src="docs/images/chat.png" alt="The AI tab: New Chat, a short conversation about the score, the box to type in and Send" width="260"> <img src="docs/images/settings.png" alt="AI Settings, its Server tab: the preset, the scheme, the host, port, path and query, and where requests go" width="420">
 
 Small local models call tools less reliably and write weaker music than large hosted ones. Pick a model that supports tool calling (Qwen 3, Llama 3.1 and later, Mistral Small, GPT-OSS and the like on a local server).
 
@@ -34,11 +34,11 @@ The manual is at <https://mateusrdp.github.io/oxiguitar-ai/>. Its source is in [
 
 ## Install
 
-Every [release](https://github.com/mateusrdp/oxiguitar-ai/releases) holds a zip per system (Linux x86_64 and ARM64, Windows x86_64 and ARM64, macOS), a `.deb` and an `.rpm` for Linux, a per-user Windows installer, a macOS `.pkg`, and a `SHA256SUMS` file. The [manual's install page](https://mateusrdp.github.io/oxiguitar-ai/install.html) says which one to use. The plugin needs OxiGuitar 0.21.5 or later (plugin interface 1.14).
+Every [release](https://github.com/mateusrdp/oxiguitar-ai/releases) holds a zip per system (Linux x86_64 and ARM64, Windows x86_64 and ARM64, macOS), a `.deb` and an `.rpm` for Linux, a per-user Windows installer, a macOS `.pkg`, and a `SHA256SUMS` file. The [manual's install page](https://mateusrdp.github.io/oxiguitar-ai/install.html) says which one to use. The plugin needs OxiGuitar 0.23.0 or later (plugin interface 1.16).
 
 ## Build and test
 
-Rust 1.99 or later from [rustup](https://rustup.rs). The plugin SDK comes from OxiGuitar's repository by git commit until interface 1.14 is tagged, then by its tag; nothing of OxiGuitar's is on crates.io.
+Rust 1.99 or later from [rustup](https://rustup.rs). The plugin SDK comes from OxiGuitar's repository, at the tag `v0.23.0`; nothing of OxiGuitar's is on crates.io.
 
 ```sh
 cargo test          # unit tests, a conversation with a scripted server on this computer, and the contract suite on the built .oxp file
