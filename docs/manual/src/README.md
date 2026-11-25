@@ -6,7 +6,7 @@ It is an early plugin, built partly to find what the plugin interface was still 
 
 **Plugins → AI Settings…** chooses the server. [How to use it](use-cases.md) walks through it.
 
-![OxiGuitar with the AI tab open on the right: a short explanation of what to ask, the server in use, a box to type a question and a Send button](images/ai-tab.png)
+![The AI tab: a short explanation of what to ask, the server in use, a box to type a question and a Send button](images/ai-tab.png)
 
 ## Language models, in a few words
 
