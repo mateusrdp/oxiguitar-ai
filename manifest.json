@@ -1,15 +1,16 @@
 {
-  "interface": "1.14",
+  "interface": "1.16",
   "id": "oxiguitar.ai",
   "name": "AI assistant",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "A chat with a language model, on this computer (llama.cpp, Ollama, LM Studio) or hosted (OpenAI, Anthropic, Gemini, any OpenAI-compatible server), that reads and writes the score and runs OxiGuitar's tools.",
   "authors": ["Mateus Rocha de Paula", "The OxiGuitar contributors"],
   "license": "GPL-3.0-or-later",
   "homepage": "https://github.com/mateusrdp/oxiguitar-ai",
-  "tabs": [
-    { "id": "chat", "title": "AI", "area": "right" },
-    { "id": "settings", "title": "AI Settings", "area": "dialog" }
+  "ui": "ui/ai.slint",
+  "views": [
+    { "id": "chat", "component": "Chat", "place": "right", "title": "AI" },
+    { "id": "settings", "component": "SettingsWindow", "place": "window" }
   ],
   "events": ["score"],
   "folders": ["skills"],
